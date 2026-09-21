@@ -19,5 +19,6 @@ pub static INSTANCE: LazyLock<Mutex<Option<SessionJournalRuntime>>> = LazyLock::
 pub async fn init(root: PathBuf) -> Result<(), RuntimeError> {
     let runtime = SessionJournalRuntime::new(root)?;
     *INSTANCE.lock().await = Some(runtime);
+    observer::start_openvr_hmd_observer();
     Ok(())
 }
