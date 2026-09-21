@@ -121,9 +121,10 @@ impl SessionJournalStore {
         file_name: &str,
     ) -> Result<Vec<SessionEvent>, JournalError> {
         let requested = Path::new(file_name);
+        let has_separator = file_name.contains('/') || file_name.contains('\\');
         let is_single_component = requested.components().count() == 1;
         let is_jsonl = requested.extension().and_then(|value| value.to_str()) == Some("jsonl");
-        if !is_single_component || !is_jsonl {
+        if file_name.is_empty() || has_separator || !is_single_component || !is_jsonl {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "session journal file name must be a single .jsonl file name",
@@ -145,7 +146,10 @@ impl SessionJournalStore {
     pub fn session_files(&self) -> Result<Vec<PathBuf>, JournalError> {
         let mut files = fs::read_dir(&self.root)?
             .filter_map(Result::ok)
-            .map(|entry| entry.path())
+            .filter_map(|entry| match entry.file_type() {
+                Ok(file_type) if file_type.is_file() => Some(entry.path()),
+                _ => None,
+            })
             .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
             .collect::<Vec<_>>();
         files.sort();
@@ -355,7 +359,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
 
-        for invalid in ["../outside.jsonl", "nested/session.jsonl", "session.txt"] {
+        for invalid in [
+            "../outside.jsonl",
+            "..\\outside.jsonl",
+            "nested/session.jsonl",
+            "nested\\session.jsonl",
+            "session.txt",
+        ] {
             let result = store.read_session_by_file_name(invalid);
             assert!(matches!(result, Err(JournalError::Io(_))));
         }
