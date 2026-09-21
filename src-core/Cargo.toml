@@ -122,6 +122,7 @@ windows = { version = "0.62.2", features = [
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",
+  "Win32_System_Power",
   "Win32_System_Threading",
 ] }
 winreg = "0.56.0"
@@ -152,6 +153,6 @@ tonic-prost-build = { version = "0.14.6", features = [] }
 [profile.release]
 panic = "abort"   # Strip expensive panic clean-up logic
 codegen-units = 1 # Compile crates one after another so the compiler can optimize better
-lto = true        # Enables link to optimizations
+lto = true          # Enables link to optimizations
 opt-level = "s"   # Optimize for binary size
-strip = true      # Remove debug symbols
+strip = true        # Remove debug symbols

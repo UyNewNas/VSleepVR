@@ -39,6 +39,8 @@ pub enum EventKind {
     WindowsSuspend,
     WindowsResume,
     WindowsPowerEvent,
+    SystemSleepInhibitionEnabled,
+    SystemSleepInhibitionDisabled,
     SleepModeEnabled,
     SleepModeDisabled,
 }
