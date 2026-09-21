@@ -17,6 +17,7 @@ import {
 import { fade } from './utils/animations';
 import { TelemetryService } from './services/telemetry.service';
 import { isHolidaysEventActive } from './utils/event-utils';
+import { VSleepHealthService } from './services/vsleep-health.service';
 
 @Component({
   selector: 'app-root',
@@ -33,7 +34,8 @@ export class AppComponent implements OnInit {
     public openvr: OpenVRService,
     translate: TranslocoService,
     private settings: AppSettingsService,
-    private telemetry: TelemetryService
+    private telemetry: TelemetryService,
+    private vsleepHealth: VSleepHealthService
   ) {
     this.settings.settings
       .pipe(
@@ -69,5 +71,7 @@ export class AppComponent implements OnInit {
       });
   }
 
-  async ngOnInit(): Promise<void> {}
+  async ngOnInit(): Promise<void> {
+    await this.vsleepHealth.init();
+  }
 }
