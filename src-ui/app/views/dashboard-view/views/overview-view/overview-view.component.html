@@ -151,7 +151,11 @@
               <div class="vsleep-timeline-detail">
                 <div class="vsleep-timeline-kind">
                   {{ vsleepEntryLabel(entry) }}
-                  @if (entry.entryType === 'classification') {
+                  @if (entry.entryType === 'observation') {
+                    <span class="vsleep-timeline-confidence">
+                      · observed · {{ entry.observation.source }}
+                    </span>
+                  } @else {
                     <span class="vsleep-timeline-confidence">
                       · {{ entry.classification.confidence }}
                     </span>
@@ -161,6 +165,11 @@
                   <div class="vsleep-timeline-rationale">
                     {{ entry.classification.rationale }}
                   </div>
+                  @if (entry.classification.evidence.length > 0) {
+                    <div class="vsleep-timeline-rationale">
+                      Evidence: {{ entry.classification.evidence.join(' · ') }}
+                    </div>
+                  }
                 }
               </div>
             </div>
