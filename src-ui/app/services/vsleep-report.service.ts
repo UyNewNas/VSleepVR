@@ -45,6 +45,13 @@ export type VSleepIncidentCategory = Extract<
   'hmd_or_link_failure' | 'steam_vr_failure' | 'vrchat_failure'
 >;
 
+export type VSleepSessionBoundaryStatus =
+  | 'complete'
+  | 'missing_start'
+  | 'missing_end'
+  | 'missing_both'
+  | 'invalid_order';
+
 export interface VSleepSessionFileInfo {
   file_name: string;
   size_bytes: number;
@@ -90,6 +97,12 @@ export interface VSleepSessionReport {
   uptime: VSleepSessionUptimeSummary;
 }
 
+export interface VSleepSessionBoundarySummary {
+  status: VSleepSessionBoundaryStatus;
+  startTimestampUtc: string | null;
+  endTimestampUtc: string | null;
+}
+
 export interface VSleepIncidentWindow {
   category: VSleepIncidentCategory;
   confidence: VSleepEventConfidence;
@@ -127,6 +140,67 @@ export class VSleepReportService {
     const [latest] = await this.listSessions();
     if (!latest) return null;
     return this.readSessionReport(latest.file_name);
+  }
+
+  summarizeSessionBoundaries(report: VSleepSessionReport): VSleepSessionBoundarySummary {
+    if (!report.session_id) {
+      return {
+        status: 'missing_both',
+        startTimestampUtc: null,
+        endTimestampUtc: null,
+      };
+    }
+
+    const boundaryEvents = report.observations
+      .filter(
+        (observation) =>
+          observation.session_id === report.session_id &&
+          observation.confidence === 'observed' &&
+          (observation.kind === 'session_started' || observation.kind === 'session_ended')
+      )
+      .sort((a, b) => Date.parse(a.timestamp_utc) - Date.parse(b.timestamp_utc));
+
+    const start = boundaryEvents.find((observation) => observation.kind === 'session_started') ?? null;
+    const end =
+      [...boundaryEvents].reverse().find((observation) => observation.kind === 'session_ended') ?? null;
+
+    if (!start && !end) {
+      return {
+        status: 'missing_both',
+        startTimestampUtc: null,
+        endTimestampUtc: null,
+      };
+    }
+    if (!start) {
+      return {
+        status: 'missing_start',
+        startTimestampUtc: null,
+        endTimestampUtc: end?.timestamp_utc ?? null,
+      };
+    }
+    if (!end) {
+      return {
+        status: 'missing_end',
+        startTimestampUtc: start.timestamp_utc,
+        endTimestampUtc: null,
+      };
+    }
+
+    const startMs = Date.parse(start.timestamp_utc);
+    const endMs = Date.parse(end.timestamp_utc);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+      return {
+        status: 'invalid_order',
+        startTimestampUtc: start.timestamp_utc,
+        endTimestampUtc: end.timestamp_utc,
+      };
+    }
+
+    return {
+      status: 'complete',
+      startTimestampUtc: start.timestamp_utc,
+      endTimestampUtc: end.timestamp_utc,
+    };
   }
 
   toTimelineEntries(report: VSleepSessionReport): VSleepTimelineEntry[] {
