@@ -1,7 +1,10 @@
 use super::{EventConfidence, EventKind, EventSource, RuntimeError, SessionEvent, INSTANCE};
 use std::{
     collections::BTreeMap,
-    sync::LazyLock,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        LazyLock,
+    },
     time::Duration,
 };
 use tokio::sync::Mutex;
@@ -14,6 +17,7 @@ struct HmdConnectionObservation {
     connected: bool,
 }
 
+static OBSERVER_STARTED: AtomicBool = AtomicBool::new(false);
 static LAST_HMD_CONNECTION: LazyLock<Mutex<Option<HmdConnectionObservation>>> =
     LazyLock::new(Default::default);
 
@@ -24,6 +28,10 @@ static LAST_HMD_CONNECTION: LazyLock<Mutex<Option<HmdConnectionObservation>>> =
 /// not prove that the physical/link layer disconnected. This keeps the journal observation-first
 /// and avoids manufacturing HMD failures from ambiguous evidence.
 pub fn start_openvr_hmd_observer() {
+    if OBSERVER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     tokio::spawn(async {
         loop {
             tokio::time::sleep(HMD_OBSERVER_INTERVAL).await;
