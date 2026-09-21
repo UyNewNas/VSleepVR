@@ -18,6 +18,20 @@
   </button>
 </div>
 <div class="action-area">
+  @if (vsleepSleepInhibition.status | async; as vsleepPower) {
+    @if (vsleepPower.sessionActive) {
+      <button
+        class="titlebar-button btn-vsleep-sleep-inhibition"
+        [class.active]="vsleepPower.inhibitionActive"
+        [attr.aria-pressed]="vsleepPower.inhibitionActive"
+        aria-label="Prevent Windows system sleep during this VSleep session"
+        title="VSleep system sleep inhibition"
+        (click)="toggleVSleepSleepInhibition()"
+      >
+        <i class="material-symbols-outlined icon-filled">bedtime</i>
+      </button>
+    }
+  }
   <button
     class="titlebar-button btn-message-center"
     [class.has-messages]="(messageCenter.messages | async)?.length"
