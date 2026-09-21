@@ -20,11 +20,28 @@ pub struct FailureClassification {
     pub rationale: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuntimeUptimeSummary {
+    pub observed_up_ms: u64,
+    pub observed_down_ms: u64,
+    pub unknown_ms: u64,
+    pub transitions: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SessionUptimeSummary {
+    pub observed_window_ms: Option<u64>,
+    pub hmd: RuntimeUptimeSummary,
+    pub steamvr: RuntimeUptimeSummary,
+    pub vrchat: RuntimeUptimeSummary,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionReport {
     pub session_id: Option<String>,
     pub observations: Vec<SessionEvent>,
     pub classifications: Vec<FailureClassification>,
+    pub uptime: SessionUptimeSummary,
 }
 
 pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
@@ -114,7 +131,130 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
         session_id: events.first().map(|event| event.session_id.clone()),
         observations: events.to_vec(),
         classifications,
+        uptime: build_uptime_summary(events),
     }
+}
+
+fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
+    let mut timed_events: Vec<(i64, EventKind)> = events
+        .iter()
+        .filter_map(|event| {
+            chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
+                .ok()
+                .map(|timestamp| (timestamp.timestamp_millis(), event.kind))
+        })
+        .collect();
+
+    if timed_events.is_empty() {
+        return SessionUptimeSummary::default();
+    }
+
+    timed_events.sort_by_key(|(timestamp, _)| *timestamp);
+    let window_start = timed_events.first().expect("non-empty timeline").0;
+    let window_end = timed_events.last().expect("non-empty timeline").0;
+    let observed_window_ms = millis_between(window_start, window_end);
+
+    SessionUptimeSummary {
+        observed_window_ms: Some(observed_window_ms),
+        hmd: summarize_runtime(
+            &timed_events,
+            window_start,
+            window_end,
+            |kind| match kind {
+                EventKind::HmdConnected => Some(RuntimeState::Up),
+                EventKind::HmdDisconnected => Some(RuntimeState::Down),
+                _ => None,
+            },
+        ),
+        steamvr: summarize_runtime(
+            &timed_events,
+            window_start,
+            window_end,
+            |kind| match kind {
+                EventKind::SteamVrStarted => Some(RuntimeState::Up),
+                EventKind::SteamVrStopped => Some(RuntimeState::Down),
+                _ => None,
+            },
+        ),
+        vrchat: summarize_runtime(
+            &timed_events,
+            window_start,
+            window_end,
+            |kind| match kind {
+                EventKind::VrchatStarted => Some(RuntimeState::Up),
+                EventKind::VrchatStopped => Some(RuntimeState::Down),
+                _ => None,
+            },
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeState {
+    Up,
+    Down,
+}
+
+fn summarize_runtime(
+    events: &[(i64, EventKind)],
+    window_start: i64,
+    window_end: i64,
+    state_for: fn(EventKind) -> Option<RuntimeState>,
+) -> RuntimeUptimeSummary {
+    let total_ms = millis_between(window_start, window_end);
+    let mut summary = RuntimeUptimeSummary::default();
+    let mut state = None;
+    let mut last_timestamp = window_start;
+
+    for (timestamp, kind) in events {
+        let Some(next_state) = state_for(*kind) else {
+            continue;
+        };
+
+        if let Some(current_state) = state {
+            add_duration(
+                &mut summary,
+                current_state,
+                millis_between(last_timestamp, *timestamp),
+            );
+            if current_state != next_state {
+                summary.transitions += 1;
+            }
+        }
+
+        state = Some(next_state);
+        last_timestamp = *timestamp;
+    }
+
+    if let Some(current_state) = state {
+        add_duration(
+            &mut summary,
+            current_state,
+            millis_between(last_timestamp, window_end),
+        );
+    }
+
+    summary.unknown_ms = total_ms.saturating_sub(
+        summary
+            .observed_up_ms
+            .saturating_add(summary.observed_down_ms),
+    );
+    summary
+}
+
+fn add_duration(summary: &mut RuntimeUptimeSummary, state: RuntimeState, duration_ms: u64) {
+    match state {
+        RuntimeState::Up => {
+            summary.observed_up_ms = summary.observed_up_ms.saturating_add(duration_ms)
+        }
+        RuntimeState::Down => {
+            summary.observed_down_ms = summary.observed_down_ms.saturating_add(duration_ms)
+        }
+    }
+}
+
+fn millis_between(start: i64, end: i64) -> u64 {
+    end.saturating_sub(start).max(0) as u64
 }
 
 fn classify(
@@ -163,6 +303,12 @@ mod tests {
             EventKind::SessionStarted | EventKind::SessionEnded => EventSource::Vsleep,
         };
         SessionEvent::new("session-a", source, kind, EventConfidence::Observed)
+    }
+
+    fn event_at(kind: EventKind, timestamp_utc: &str) -> SessionEvent {
+        let mut event = event(kind);
+        event.timestamp_utc = timestamp_utc.to_string();
+        event
     }
 
     #[test]
@@ -232,6 +378,71 @@ mod tests {
         assert_eq!(
             report.classifications[0].confidence,
             EventConfidence::Observed
+        );
+    }
+
+    #[test]
+    fn summarizes_observed_up_down_and_unknown_time_without_guessing() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let report = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::SteamVrStopped, "2026-09-21T00:40:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ]);
+
+        assert_eq!(report.uptime.observed_window_ms, Some(60 * MINUTE_MS));
+        assert_eq!(
+            report.uptime.steamvr,
+            RuntimeUptimeSummary {
+                observed_up_ms: 30 * MINUTE_MS,
+                observed_down_ms: 20 * MINUTE_MS,
+                unknown_ms: 10 * MINUTE_MS,
+                transitions: 1,
+            }
+        );
+        assert_eq!(
+            report.uptime.vrchat,
+            RuntimeUptimeSummary {
+                observed_up_ms: 40 * MINUTE_MS,
+                observed_down_ms: 0,
+                unknown_ms: 20 * MINUTE_MS,
+                transitions: 0,
+            }
+        );
+        assert_eq!(
+            report.uptime.hmd,
+            RuntimeUptimeSummary {
+                observed_up_ms: 0,
+                observed_down_ms: 0,
+                unknown_ms: 60 * MINUTE_MS,
+                transitions: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn uptime_summary_uses_chronological_window_even_if_input_is_out_of_order() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let report = build_session_report(&[
+            event_at(EventKind::VrchatStopped, "2026-09-21T00:45:00Z"),
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:15:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ]);
+
+        assert_eq!(report.uptime.observed_window_ms, Some(60 * MINUTE_MS));
+        assert_eq!(
+            report.uptime.vrchat,
+            RuntimeUptimeSummary {
+                observed_up_ms: 30 * MINUTE_MS,
+                observed_down_ms: 15 * MINUTE_MS,
+                unknown_ms: 15 * MINUTE_MS,
+                transitions: 1,
+            }
         );
     }
 }
