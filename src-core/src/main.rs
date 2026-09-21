@@ -589,6 +589,7 @@ fn configure_command_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool {
         vsleep::commands::vsleep_finish_session,
         vsleep::commands::vsleep_list_sessions,
         vsleep::commands::vsleep_read_session,
+        vsleep::commands::vsleep_read_session_report,
         vrcx::commands::vrcx_log,
     ]
 }
