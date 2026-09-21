@@ -122,6 +122,12 @@
   }
 }
 
+.btn-vsleep-sleep-inhibition.active,
+.btn-vsleep-sleep-inhibition.active:hover {
+  background: var(--color-success);
+  color: var(--color-on-success);
+}
+
 .action-spacer {
   width: 1em;
   height: 100%;
