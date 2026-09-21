@@ -91,7 +91,7 @@ fn ensure_webview2_available() {
             None,
             &HSTRING::from(message),
             &HSTRING::from("OyasumiVR"),
-            MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND | MB_YESNO,
+            MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND,
         )
     };
     if result == IDYES {
