@@ -91,7 +91,7 @@ fn ensure_webview2_available() {
             None,
             &HSTRING::from(message),
             &HSTRING::from("OyasumiVR"),
-            MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND,
+            MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND | MB_YESNO,
         )
     };
     if result == IDYES {
@@ -587,6 +587,8 @@ fn configure_command_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool {
         vsleep::commands::vsleep_active_session_id,
         vsleep::commands::vsleep_start_session,
         vsleep::commands::vsleep_finish_session,
+        vsleep::commands::vsleep_sleep_inhibition_active,
+        vsleep::commands::vsleep_set_sleep_inhibition,
         vsleep::commands::vsleep_list_sessions,
         vsleep::commands::vsleep_read_session,
         vrcx::commands::vrcx_log,
