@@ -10,6 +10,7 @@ use std::{
 use tokio::sync::Mutex;
 
 const HMD_OBSERVER_INTERVAL: Duration = Duration::from_millis(250);
+const STEAMVR_PROCESS_OBSERVER_INTERVAL: Duration = Duration::from_secs(1);
 const VRCHAT_PROCESS_OBSERVER_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,8 +26,11 @@ struct ProcessObservation {
 }
 
 static HMD_OBSERVER_STARTED: AtomicBool = AtomicBool::new(false);
+static STEAMVR_PROCESS_OBSERVER_STARTED: AtomicBool = AtomicBool::new(false);
 static VRCHAT_PROCESS_OBSERVER_STARTED: AtomicBool = AtomicBool::new(false);
 static LAST_HMD_CONNECTION: LazyLock<Mutex<Option<HmdConnectionObservation>>> =
+    LazyLock::new(Default::default);
+static LAST_STEAMVR_PROCESS: LazyLock<Mutex<Option<ProcessObservation>>> =
     LazyLock::new(Default::default);
 static LAST_VRCHAT_PROCESS: LazyLock<Mutex<Option<ProcessObservation>>> =
     LazyLock::new(Default::default);
@@ -37,6 +41,7 @@ static LAST_VRCHAT_PROCESS: LazyLock<Mutex<Option<ProcessObservation>>> =
 /// active and never restart, reconnect, or otherwise mutate SteamVR, VRChat, or the HMD runtime.
 pub fn start_observers() {
     start_openvr_hmd_observer();
+    start_steamvr_process_observer();
     start_vrchat_process_observer();
 }
 
@@ -80,6 +85,34 @@ fn start_openvr_hmd_observer() {
             };
             if let Err(error) = observe_hmd_connected(connected).await {
                 log::error!("[VSleep] Failed to record HMD connectivity observation: {error}");
+            }
+        }
+    });
+}
+
+/// Starts a passive SteamVR process sampler using the same `vrmonitor.exe` signal already used
+/// by the upstream OpenVR module to decide whether SteamVR is running.
+///
+/// A baseline is written for every VSleep session, followed only by start/stop transitions. This
+/// observes process presence only; it does not infer why SteamVR stopped or mutate the runtime.
+fn start_steamvr_process_observer() {
+    if STEAMVR_PROCESS_OBSERVER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(STEAMVR_PROCESS_OBSERVER_INTERVAL).await;
+
+            if !has_active_session().await {
+                clear_steamvr_process_cache().await;
+                continue;
+            }
+
+            let process_ids = crate::utils::process_ids("vrmonitor.exe").await;
+            let process_count = process_ids.len();
+            if let Err(error) = observe_steamvr_process(process_count).await {
+                log::error!("[VSleep] Failed to record SteamVR process observation: {error}");
             }
         }
     });
@@ -151,6 +184,55 @@ pub async fn observe_hmd_connected(connected: bool) -> Result<Option<SessionEven
         *previous = Some(HmdConnectionObservation {
             session_id,
             connected,
+        });
+    }
+    Ok(event)
+}
+
+/// Records a per-session SteamVR process baseline and subsequent running/stopped transitions.
+///
+/// `process_count` is observed from the upstream sysinfo process cache using `vrmonitor.exe`,
+/// which upstream already treats as its SteamVR-running gate. Only the count is persisted.
+pub async fn observe_steamvr_process(
+    process_count: usize,
+) -> Result<Option<SessionEvent>, RuntimeError> {
+    let instance = INSTANCE.lock().await;
+    let Some(runtime) = instance.as_ref() else {
+        clear_steamvr_process_cache().await;
+        return Ok(None);
+    };
+    let Some(session_id) = runtime.active_session_id().map(str::to_string) else {
+        clear_steamvr_process_cache().await;
+        return Ok(None);
+    };
+
+    let running = process_count > 0;
+    let mut previous = LAST_STEAMVR_PROCESS.lock().await;
+    if same_process_observation(previous.as_ref(), &session_id, running) {
+        return Ok(None);
+    }
+
+    let kind = if running {
+        EventKind::SteamVrStarted
+    } else {
+        EventKind::SteamVrStopped
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        "process_count".to_string(),
+        serde_json::Value::from(process_count as u64),
+    );
+    let event = runtime.record_if_active(
+        EventSource::SteamVr,
+        kind,
+        EventConfidence::Observed,
+        metadata,
+    )?;
+
+    if event.is_some() {
+        *previous = Some(ProcessObservation {
+            session_id,
+            running,
         });
     }
     Ok(event)
@@ -233,6 +315,10 @@ fn same_process_observation(
 
 async fn clear_hmd_connection_cache() {
     *LAST_HMD_CONNECTION.lock().await = None;
+}
+
+async fn clear_steamvr_process_cache() {
+    *LAST_STEAMVR_PROCESS.lock().await = None;
 }
 
 async fn clear_vrchat_process_cache() {
