@@ -1,4 +1,4 @@
-use super::{SessionEvent, SessionFileInfo, INSTANCE};
+use super::{SessionEvent, SessionFileInfo, SessionReport, INSTANCE};
 
 const NOT_INITIALIZED: &str = "VSleep session journal runtime is not initialized";
 
@@ -43,5 +43,14 @@ pub async fn vsleep_read_session(file_name: String) -> Result<Vec<SessionEvent>,
     let runtime = instance.as_ref().ok_or_else(|| NOT_INITIALIZED.to_string())?;
     runtime
         .read_session(&file_name)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn vsleep_read_session_report(file_name: String) -> Result<SessionReport, String> {
+    let instance = INSTANCE.lock().await;
+    let runtime = instance.as_ref().ok_or_else(|| NOT_INITIALIZED.to_string())?;
+    runtime
+        .read_session_report(&file_name)
         .map_err(|error| error.to_string())
 }
