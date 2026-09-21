@@ -7,7 +7,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicBool, Ordering}, Mutex},
+    sync::Mutex,
 };
 use uuid::Uuid;
 
@@ -83,15 +83,17 @@ impl SessionJournalStore {
         let journal = SessionJournal {
             session_id,
             path,
-            writer: Mutex::new(BufWriter::new(file)),
-            ended: AtomicBool::new(false),
+            state: Mutex::new(WriterState {
+                writer: BufWriter::new(file),
+                ended: false,
+            }),
         };
-        journal.write_event(SessionEvent::new(
-            journal.session_id.clone(),
+        journal.record(
             EventSource::Vsleep,
             EventKind::SessionStarted,
             EventConfidence::Observed,
-        ))?;
+            BTreeMap::new(),
+        )?;
         Ok(journal)
     }
 
@@ -128,11 +130,16 @@ impl SessionJournalStore {
 }
 
 #[derive(Debug)]
+struct WriterState {
+    writer: BufWriter<File>,
+    ended: bool,
+}
+
+#[derive(Debug)]
 pub struct SessionJournal {
     session_id: String,
     path: PathBuf,
-    writer: Mutex<BufWriter<File>>,
-    ended: AtomicBool,
+    state: Mutex<WriterState>,
 }
 
 impl SessionJournal {
@@ -151,7 +158,8 @@ impl SessionJournal {
         confidence: EventConfidence,
         metadata: BTreeMap<String, Value>,
     ) -> Result<SessionEvent, JournalError> {
-        if self.ended.load(Ordering::Acquire) {
+        let mut state = self.lock_state()?;
+        if state.ended {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "cannot append to a finished VSleep session journal",
@@ -160,16 +168,13 @@ impl SessionJournal {
         }
         let event = SessionEvent::new(self.session_id.clone(), source, kind, confidence)
             .with_metadata(metadata);
-        self.write_event(event.clone())?;
+        Self::append_event(&mut state, &event)?;
         Ok(event)
     }
 
     pub fn finish(&self) -> Result<Option<SessionEvent>, JournalError> {
-        if self
-            .ended
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        let mut state = self.lock_state()?;
+        if state.ended {
             return Ok(None);
         }
         let event = SessionEvent::new(
@@ -178,17 +183,22 @@ impl SessionJournal {
             EventKind::SessionEnded,
             EventConfidence::Observed,
         );
-        self.write_event(event.clone())?;
+        Self::append_event(&mut state, &event)?;
+        state.ended = true;
         Ok(Some(event))
     }
 
-    fn write_event(&self, event: SessionEvent) -> Result<(), JournalError> {
-        let mut writer = self.writer.lock().map_err(|error| {
-            std::io::Error::other(format!("session journal writer lock poisoned: {error}"))
-        })?;
-        serde_json::to_writer(&mut *writer, &event)?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, WriterState>, JournalError> {
+        self.state.lock().map_err(|error| {
+            std::io::Error::other(format!("session journal writer lock poisoned: {error}")).into()
+        })
+    }
+
+    fn append_event(state: &mut WriterState, event: &SessionEvent) -> Result<(), JournalError> {
+        let mut bytes = serde_json::to_vec(event)?;
+        bytes.push(b'\n');
+        state.writer.write_all(&bytes)?;
+        state.writer.flush()?;
         Ok(())
     }
 }
