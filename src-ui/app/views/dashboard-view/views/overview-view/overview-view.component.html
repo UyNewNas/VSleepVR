@@ -63,6 +63,74 @@
       </div>
     }
   </div>
+  <div class="vsleep-report">
+    <div class="vsleep-report-header">
+      <span class="vsleep-report-title">VSleep</span>
+      @if (vsleepReport) {
+        <span class="vsleep-report-window">
+          {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
+        </span>
+      }
+    </div>
+    @if (vsleepReportLoading) {
+      <div class="vsleep-report-state"><div class="small-spinner"></div></div>
+    } @else if (vsleepReportFailed) {
+      <div class="vsleep-report-state">!</div>
+    } @else if (vsleepReport) {
+      <div class="vsleep-report-body">
+        <div class="vsleep-uptime">
+          <div class="vsleep-runtime-row">
+            <span class="vsleep-runtime-name">HMD</span>
+            <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_up_ms) }}</span>
+            <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_down_ms) }}</span>
+            <span>? {{ formatVSleepDuration(vsleepReport.uptime.hmd.unknown_ms) }}</span>
+          </div>
+          <div class="vsleep-runtime-row">
+            <span class="vsleep-runtime-name">SteamVR</span>
+            <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.steamvr.observed_up_ms) }}</span>
+            <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.steamvr.observed_down_ms) }}</span>
+            <span>? {{ formatVSleepDuration(vsleepReport.uptime.steamvr.unknown_ms) }}</span>
+          </div>
+          <div class="vsleep-runtime-row">
+            <span class="vsleep-runtime-name">VRChat</span>
+            <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.vrchat.observed_up_ms) }}</span>
+            <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.vrchat.observed_down_ms) }}</span>
+            <span>? {{ formatVSleepDuration(vsleepReport.uptime.vrchat.unknown_ms) }}</span>
+          </div>
+        </div>
+        <div class="vsleep-timeline">
+          @for (entry of vsleepTimeline; track $index) {
+            <div
+              class="vsleep-timeline-entry"
+              [class.inference]="entry.entryType === 'classification'"
+            >
+              <span class="vsleep-timeline-time">{{ formatVSleepTime(entry.timestampUtc) }}</span>
+              <span class="vsleep-timeline-marker">
+                {{ entry.entryType === 'observation' ? '●' : '◇' }}
+              </span>
+              <div class="vsleep-timeline-detail">
+                <div class="vsleep-timeline-kind">
+                  {{ vsleepEntryLabel(entry) }}
+                  @if (entry.entryType === 'classification') {
+                    <span class="vsleep-timeline-confidence">
+                      · {{ entry.classification.confidence }}
+                    </span>
+                  }
+                </div>
+                @if (entry.entryType === 'classification') {
+                  <div class="vsleep-timeline-rationale">
+                    {{ entry.classification.rationale }}
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    } @else {
+      <div class="vsleep-report-state">—</div>
+    }
+  </div>
   <app-event-log></app-event-log>
 </div>
 <app-device-list @noop></app-device-list>

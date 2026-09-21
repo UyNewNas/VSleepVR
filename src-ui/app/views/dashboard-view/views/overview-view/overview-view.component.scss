@@ -18,6 +18,122 @@ app-event-log {
   flex: 1;
 }
 
+.vsleep-report {
+  flex-shrink: 0;
+  margin-bottom: 1em;
+  padding: 1em 1.25em;
+  overflow: hidden;
+  border-radius: var(--surface-border-radius);
+  background: var(--color-surface-1);
+  border: 1px solid color-mix(in srgb, var(--color-text-1) 10%, transparent);
+
+  .vsleep-report-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.75em;
+  }
+
+  .vsleep-report-title {
+    font-size: 1.1em;
+    font-weight: 600;
+  }
+
+  .vsleep-report-window {
+    font-size: 0.85em;
+    opacity: 0.6;
+  }
+
+  .vsleep-report-state {
+    min-height: 3em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.55;
+  }
+
+  .vsleep-report-body {
+    display: grid;
+    grid-template-columns: minmax(14em, 0.9fr) minmax(0, 1.4fr);
+    gap: 1em;
+    min-height: 0;
+  }
+
+  .vsleep-uptime {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+  }
+
+  .vsleep-runtime-row {
+    display: grid;
+    grid-template-columns: 4.75em repeat(3, minmax(0, 1fr));
+    gap: 0.5em;
+    align-items: center;
+    padding: 0.45em 0.55em;
+    border-radius: calc(var(--surface-border-radius) / 2);
+    background: var(--color-surface-0);
+    font-size: 0.8em;
+    white-space: nowrap;
+  }
+
+  .vsleep-runtime-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vsleep-timeline {
+    max-height: 8.5em;
+    overflow-y: auto;
+    padding-right: 0.25em;
+  }
+
+  .vsleep-timeline-entry {
+    display: grid;
+    grid-template-columns: 3.25em 1em minmax(0, 1fr);
+    gap: 0.4em;
+    align-items: start;
+    padding: 0.3em 0.45em;
+    border-left: 2px solid color-mix(in srgb, var(--color-text-1) 25%, transparent);
+    font-size: 0.8em;
+
+    &.inference {
+      border-left-style: dashed;
+      border-left-color: var(--color-primary);
+      background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    }
+  }
+
+  .vsleep-timeline-time {
+    opacity: 0.55;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-timeline-marker {
+    text-align: center;
+  }
+
+  .vsleep-timeline-detail {
+    min-width: 0;
+  }
+
+  .vsleep-timeline-kind {
+    overflow-wrap: anywhere;
+  }
+
+  .vsleep-timeline-confidence,
+  .vsleep-timeline-rationale {
+    opacity: 0.62;
+  }
+
+  .vsleep-timeline-rationale {
+    margin-top: 0.1em;
+    font-size: 0.9em;
+    line-height: 1.25;
+  }
+}
+
 .sleep-mode {
   flex-shrink: 0;
   display: flex;
