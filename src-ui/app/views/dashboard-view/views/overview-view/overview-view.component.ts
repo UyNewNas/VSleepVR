@@ -8,6 +8,7 @@ import { SleepPreparationService } from '../../../../services/sleep-preparation.
 import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
 import type {
+  VSleepSessionFileInfo,
   VSleepSessionReport,
   VSleepTimelineEntry,
 } from '../../../../services/vsleep-report.service';
@@ -27,10 +28,13 @@ export class OverviewViewComponent implements OnInit {
   illustrationPath: string | null = null;
   illustrationVariant: IllustrationVariant | null = null;
   mouseover = false;
+  vsleepSessions: VSleepSessionFileInfo[] = [];
+  vsleepSelectedSessionIndex = 0;
   vsleepReport: VSleepSessionReport | null = null;
   vsleepTimeline: VSleepTimelineEntry[] = [];
   vsleepReportLoading = true;
   vsleepReportFailed = false;
+  private vsleepReportLoadGeneration = 0;
 
   constructor(
     private sleep: SleepService,
@@ -46,7 +50,7 @@ export class OverviewViewComponent implements OnInit {
       this.sleepModeActive = sleepModeActive;
       this.determineIllustrationPath();
     });
-    void this.loadLatestVSleepReport();
+    void this.refreshVSleepReport();
   }
 
   async setSleepMode(enabled: boolean) {
@@ -99,26 +103,94 @@ export class OverviewViewComponent implements OnInit {
     }).format(timestamp);
   }
 
+  protected formatVSleepSessionDate(timestampUtc: string | null): string {
+    if (!timestampUtc) return '—';
+    const timestamp = new Date(timestampUtc);
+    if (Number.isNaN(timestamp.getTime())) return '—';
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(timestamp);
+  }
+
   protected vsleepEntryLabel(entry: VSleepTimelineEntry): string {
     return entry.entryType === 'observation'
       ? entry.observation.kind
       : entry.classification.category;
   }
 
-  private async loadLatestVSleepReport(): Promise<void> {
+  protected async refreshVSleepReport(): Promise<void> {
+    const generation = ++this.vsleepReportLoadGeneration;
+    const followLatest = this.vsleepSelectedSessionIndex === 0;
+    const selectedFileName = followLatest
+      ? null
+      : (this.vsleepSessions[this.vsleepSelectedSessionIndex]?.file_name ?? null);
+
     this.vsleepReportLoading = true;
     this.vsleepReportFailed = false;
+
     try {
-      this.vsleepReport = await this.vsleepReports.readLatestSessionReport();
-      this.vsleepTimeline = this.vsleepReport
-        ? this.vsleepReports.toTimelineEntries(this.vsleepReport).slice(-8)
-        : [];
+      const sessions = await this.vsleepReports.listSessions();
+      if (generation !== this.vsleepReportLoadGeneration) return;
+
+      this.vsleepSessions = sessions;
+      if (sessions.length === 0) {
+        this.vsleepSelectedSessionIndex = 0;
+        this.applyVSleepReport(null);
+        return;
+      }
+
+      const preservedIndex = selectedFileName
+        ? sessions.findIndex((session) => session.file_name === selectedFileName)
+        : -1;
+      this.vsleepSelectedSessionIndex = preservedIndex >= 0 ? preservedIndex : 0;
+
+      const report = await this.vsleepReports.readSessionReport(
+        sessions[this.vsleepSelectedSessionIndex].file_name
+      );
+      if (generation !== this.vsleepReportLoadGeneration) return;
+      this.applyVSleepReport(report);
     } catch {
-      this.vsleepReport = null;
-      this.vsleepTimeline = [];
+      if (generation !== this.vsleepReportLoadGeneration) return;
+      this.applyVSleepReport(null);
       this.vsleepReportFailed = true;
     } finally {
-      this.vsleepReportLoading = false;
+      if (generation === this.vsleepReportLoadGeneration) {
+        this.vsleepReportLoading = false;
+      }
     }
+  }
+
+  protected async selectVSleepSession(index: number): Promise<void> {
+    if (index < 0 || index >= this.vsleepSessions.length) return;
+    if (index === this.vsleepSelectedSessionIndex && this.vsleepReport !== null) return;
+
+    const generation = ++this.vsleepReportLoadGeneration;
+    this.vsleepSelectedSessionIndex = index;
+    this.vsleepReportLoading = true;
+    this.vsleepReportFailed = false;
+
+    try {
+      const report = await this.vsleepReports.readSessionReport(
+        this.vsleepSessions[index].file_name
+      );
+      if (generation !== this.vsleepReportLoadGeneration) return;
+      this.applyVSleepReport(report);
+    } catch {
+      if (generation !== this.vsleepReportLoadGeneration) return;
+      this.applyVSleepReport(null);
+      this.vsleepReportFailed = true;
+    } finally {
+      if (generation === this.vsleepReportLoadGeneration) {
+        this.vsleepReportLoading = false;
+      }
+    }
+  }
+
+  private applyVSleepReport(report: VSleepSessionReport | null): void {
+    this.vsleepReport = report;
+    this.vsleepTimeline = report ? this.vsleepReports.toTimelineEntries(report).slice(-8) : [];
   }
 }

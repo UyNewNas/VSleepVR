@@ -66,11 +66,51 @@
   <div class="vsleep-report">
     <div class="vsleep-report-header">
       <span class="vsleep-report-title">VSleep</span>
-      @if (vsleepReport) {
-        <span class="vsleep-report-window">
-          {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
-        </span>
-      }
+      <div class="vsleep-report-controls">
+        @if (vsleepSessions.length > 0) {
+          <button
+            type="button"
+            class="vsleep-report-nav"
+            aria-label="Older VSleep session"
+            title="Older VSleep session"
+            [disabled]="
+              vsleepReportLoading || vsleepSelectedSessionIndex >= vsleepSessions.length - 1
+            "
+            (click)="selectVSleepSession(vsleepSelectedSessionIndex + 1)"
+          >
+            ←
+          </button>
+          <span class="vsleep-report-session">
+            {{ formatVSleepSessionDate(vsleepSessions[vsleepSelectedSessionIndex].modified_utc) }}
+            · {{ vsleepSelectedSessionIndex + 1 }}/{{ vsleepSessions.length }}
+          </span>
+          <button
+            type="button"
+            class="vsleep-report-nav"
+            aria-label="Newer VSleep session"
+            title="Newer VSleep session"
+            [disabled]="vsleepReportLoading || vsleepSelectedSessionIndex === 0"
+            (click)="selectVSleepSession(vsleepSelectedSessionIndex - 1)"
+          >
+            →
+          </button>
+        }
+        <button
+          type="button"
+          class="vsleep-report-refresh"
+          aria-label="Refresh VSleep sessions"
+          title="Refresh VSleep sessions"
+          [disabled]="vsleepReportLoading"
+          (click)="refreshVSleepReport()"
+        >
+          ↻
+        </button>
+        @if (vsleepReport) {
+          <span class="vsleep-report-window">
+            {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
+          </span>
+        }
+      </div>
     </div>
     @if (vsleepReportLoading) {
       <div class="vsleep-report-state"><div class="small-spinner"></div></div>

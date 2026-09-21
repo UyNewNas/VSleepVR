@@ -29,19 +29,65 @@ app-event-log {
 
   .vsleep-report-header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
+    gap: 0.75em;
     margin-bottom: 0.75em;
   }
 
   .vsleep-report-title {
+    flex-shrink: 0;
     font-size: 1.1em;
     font-weight: 600;
   }
 
+  .vsleep-report-controls {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35em;
+  }
+
+  .vsleep-report-session,
   .vsleep-report-window {
-    font-size: 0.85em;
-    opacity: 0.6;
+    font-size: 0.78em;
+    opacity: 0.62;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-report-session {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vsleep-report-window {
+    margin-left: 0.2em;
+  }
+
+  .vsleep-report-nav,
+  .vsleep-report-refresh {
+    flex-shrink: 0;
+    width: 1.8em;
+    height: 1.8em;
+    padding: 0;
+    border: 0;
+    border-radius: calc(var(--surface-border-radius) / 2);
+    background: var(--color-surface-0);
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    &:not(:disabled):hover {
+      background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-0));
+    }
   }
 
   .vsleep-report-state {
