@@ -191,6 +191,6 @@ export class OverviewViewComponent implements OnInit {
 
   private applyVSleepReport(report: VSleepSessionReport | null): void {
     this.vsleepReport = report;
-    this.vsleepTimeline = report ? this.vsleepReports.toTimelineEntries(report).slice(-8) : [];
+    this.vsleepTimeline = report ? this.vsleepReports.toTimelineEntries(report) : [];
   }
 }
