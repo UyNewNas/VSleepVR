@@ -1,5 +1,6 @@
 use super::event::{EventConfidence, EventKind, EventSource, SessionEvent};
 use super::journal::{JournalError, SessionFileInfo, SessionJournal, SessionJournalStore};
+use super::timeline::{build_session_report, SessionReport};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -104,6 +105,11 @@ impl SessionJournalRuntime {
     pub fn read_session(&self, file_name: &str) -> Result<Vec<SessionEvent>, RuntimeError> {
         Ok(self.store.read_session_by_file_name(file_name)?)
     }
+
+    pub fn read_session_report(&self, file_name: &str) -> Result<SessionReport, RuntimeError> {
+        let events = self.read_session(file_name)?;
+        Ok(build_session_report(&events))
+    }
 }
 
 #[cfg(test)]
@@ -155,5 +161,41 @@ mod tests {
         assert_eq!(events[0].kind, EventKind::SessionStarted);
         assert_eq!(events[1].kind, EventKind::HmdDisconnected);
         assert_eq!(events[2].kind, EventKind::SessionEnded);
+    }
+
+    #[test]
+    fn builds_report_directly_from_persisted_session_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+
+        let session_id = runtime.start_session().unwrap();
+        for (source, kind) in [
+            (EventSource::SteamVr, EventKind::SteamVrStarted),
+            (EventSource::VrchatProcess, EventKind::VrchatStarted),
+            (EventSource::OpenVr, EventKind::HmdDisconnected),
+        ] {
+            runtime
+                .record_if_active(
+                    source,
+                    kind,
+                    EventConfidence::Observed,
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        runtime.finish_session().unwrap();
+
+        let sessions = runtime.list_sessions().unwrap();
+        let report = runtime
+            .read_session_report(&sessions[0].file_name)
+            .unwrap();
+
+        assert_eq!(report.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(report.observations.len(), 5);
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            crate::vsleep::FailureClass::HmdOrLinkFailure
+        );
     }
 }
