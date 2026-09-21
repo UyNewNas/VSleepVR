@@ -179,7 +179,11 @@ export class VSleepReportService {
           })
         ),
       ...report.observations
-        .filter((observation) => this.incidentCategoryForRecovery(observation.kind) !== null)
+        .filter(
+          (observation) =>
+            observation.confidence === 'observed' &&
+            this.incidentCategoryForRecovery(observation.kind) !== null
+        )
         .map(
           (observation): IncidentEvent => ({
             entryType: 'recovery',
