@@ -40,6 +40,12 @@ export type VSleepFailureClass =
   | 'windows_power_transition'
   | 'unknown_insufficient_evidence';
 
+export interface VSleepSessionFileInfo {
+  file_name: string;
+  size_bytes: number;
+  modified_utc: string | null;
+}
+
 export interface VSleepSessionEvent {
   schema_version: number;
   timestamp_utc: string;
@@ -95,8 +101,18 @@ export type VSleepTimelineEntry =
   providedIn: 'root',
 })
 export class VSleepReportService {
+  async listSessions(): Promise<VSleepSessionFileInfo[]> {
+    return invoke<VSleepSessionFileInfo[]>('vsleep_list_sessions');
+  }
+
   async readSessionReport(fileName: string): Promise<VSleepSessionReport> {
     return invoke<VSleepSessionReport>('vsleep_read_session_report', { fileName });
+  }
+
+  async readLatestSessionReport(): Promise<VSleepSessionReport | null> {
+    const [latest] = await this.listSessions();
+    if (!latest) return null;
+    return this.readSessionReport(latest.file_name);
   }
 
   toTimelineEntries(report: VSleepSessionReport): VSleepTimelineEntry[] {

@@ -67,6 +67,27 @@ function reportFixture(): VSleepSessionReport {
 }
 
 describe('VSleepReportService', () => {
+  it('lists persisted sessions through the read-only Tauri command', async () => {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValue([
+      {
+        file_name: 'session-a.jsonl',
+        size_bytes: 128,
+        modified_utc: '2026-09-21T07:31:00.000Z',
+      },
+    ]);
+    const service = new VSleepReportService();
+
+    await expect(service.listSessions()).resolves.toEqual([
+      {
+        file_name: 'session-a.jsonl',
+        size_bytes: 128,
+        modified_utc: '2026-09-21T07:31:00.000Z',
+      },
+    ]);
+    expect(mocks.invoke).toHaveBeenCalledWith('vsleep_list_sessions');
+  });
+
   it('loads a persisted report through the read-only Tauri command', async () => {
     const report = reportFixture();
     mocks.invoke.mockReset();
@@ -77,6 +98,37 @@ describe('VSleepReportService', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('vsleep_read_session_report', {
       fileName: 'session-a.jsonl',
     });
+  });
+
+  it('loads the newest persisted session without guessing a filename', async () => {
+    const report = reportFixture();
+    mocks.invoke.mockReset();
+    mocks.invoke
+      .mockResolvedValueOnce([
+        {
+          file_name: 'session-a.jsonl',
+          size_bytes: 128,
+          modified_utc: '2026-09-21T07:31:00.000Z',
+        },
+      ])
+      .mockResolvedValueOnce(report);
+    const service = new VSleepReportService();
+
+    await expect(service.readLatestSessionReport()).resolves.toEqual(report);
+    expect(mocks.invoke).toHaveBeenNthCalledWith(1, 'vsleep_list_sessions');
+    expect(mocks.invoke).toHaveBeenNthCalledWith(2, 'vsleep_read_session_report', {
+      fileName: 'session-a.jsonl',
+    });
+  });
+
+  it('returns null when no persisted session exists', async () => {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValue([]);
+    const service = new VSleepReportService();
+
+    await expect(service.readLatestSessionReport()).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledWith('vsleep_list_sessions');
   });
 
   it('keeps observations visually separable from classifications in chronological order', () => {
