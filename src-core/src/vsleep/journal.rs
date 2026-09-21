@@ -1,4 +1,5 @@
 use super::event::{EventConfidence, EventKind, EventSource, SessionEvent};
+use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -40,6 +41,13 @@ impl From<serde_json::Error> for JournalError {
     fn from(value: serde_json::Error) -> Self {
         Self::Json(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionFileInfo {
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub modified_utc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +116,32 @@ impl SessionJournalStore {
             .collect()
     }
 
+    pub fn read_session_by_file_name(
+        &self,
+        file_name: &str,
+    ) -> Result<Vec<SessionEvent>, JournalError> {
+        let requested = Path::new(file_name);
+        let is_single_component = requested.components().count() == 1;
+        let is_jsonl = requested.extension().and_then(|value| value.to_str()) == Some("jsonl");
+        if !is_single_component || !is_jsonl {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "session journal file name must be a single .jsonl file name",
+            )
+            .into());
+        }
+
+        let path = self.root.join(requested);
+        if !path.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "session journal file does not exist",
+            )
+            .into());
+        }
+        self.read_session(&path)
+    }
+
     pub fn session_files(&self) -> Result<Vec<PathBuf>, JournalError> {
         let mut files = fs::read_dir(&self.root)?
             .filter_map(Result::ok)
@@ -116,6 +150,36 @@ impl SessionJournalStore {
             .collect::<Vec<_>>();
         files.sort();
         Ok(files)
+    }
+
+    pub fn list_sessions(&self) -> Result<Vec<SessionFileInfo>, JournalError> {
+        let mut files = self.session_files()?;
+        files.reverse();
+        files
+            .into_iter()
+            .map(|path| {
+                let metadata = fs::metadata(&path)?;
+                let file_name = path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "session journal file name is not valid UTF-8",
+                        )
+                    })?
+                    .to_string();
+                let modified_utc = metadata.modified().ok().map(|value| {
+                    chrono::DateTime::<chrono::Utc>::from(value)
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                });
+                Ok(SessionFileInfo {
+                    file_name,
+                    size_bytes: metadata.len(),
+                    modified_utc,
+                })
+            })
+            .collect()
     }
 
     fn prune_for_new_session(&self) -> Result<(), JournalError> {
@@ -264,5 +328,36 @@ mod tests {
         }
 
         assert_eq!(store.session_files().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn lists_sessions_for_ui_and_reads_them_by_safe_file_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+        let journal = store.start_session().unwrap();
+        journal.finish().unwrap();
+
+        let sessions = store.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].file_name.ends_with(".jsonl"));
+        assert!(sessions[0].size_bytes > 0);
+
+        let events = store
+            .read_session_by_file_name(&sessions[0].file_name)
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, EventKind::SessionStarted);
+        assert_eq!(events[1].kind, EventKind::SessionEnded);
+    }
+
+    #[test]
+    fn rejects_session_file_path_traversal() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+
+        for invalid in ["../outside.jsonl", "nested/session.jsonl", "session.txt"] {
+            let result = store.read_session_by_file_name(invalid);
+            assert!(matches!(result, Err(JournalError::Io(_))));
+        }
     }
 }
