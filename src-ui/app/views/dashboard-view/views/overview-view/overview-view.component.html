@@ -118,25 +118,48 @@
       <div class="vsleep-report-state">!</div>
     } @else if (vsleepReport) {
       <div class="vsleep-report-body">
-        <div class="vsleep-uptime">
-          <div class="vsleep-runtime-row">
-            <span class="vsleep-runtime-name">HMD</span>
-            <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_up_ms) }}</span>
-            <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_down_ms) }}</span>
-            <span>? {{ formatVSleepDuration(vsleepReport.uptime.hmd.unknown_ms) }}</span>
+        <div class="vsleep-summary-column">
+          <div class="vsleep-uptime">
+            <div class="vsleep-runtime-row">
+              <span class="vsleep-runtime-name">HMD</span>
+              <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_up_ms) }}</span>
+              <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_down_ms) }}</span>
+              <span>? {{ formatVSleepDuration(vsleepReport.uptime.hmd.unknown_ms) }}</span>
+            </div>
+            <div class="vsleep-runtime-row">
+              <span class="vsleep-runtime-name">SteamVR</span>
+              <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.steamvr.observed_up_ms) }}</span>
+              <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.steamvr.observed_down_ms) }}</span>
+              <span>? {{ formatVSleepDuration(vsleepReport.uptime.steamvr.unknown_ms) }}</span>
+            </div>
+            <div class="vsleep-runtime-row">
+              <span class="vsleep-runtime-name">VRChat</span>
+              <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.vrchat.observed_up_ms) }}</span>
+              <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.vrchat.observed_down_ms) }}</span>
+              <span>? {{ formatVSleepDuration(vsleepReport.uptime.vrchat.unknown_ms) }}</span>
+            </div>
           </div>
-          <div class="vsleep-runtime-row">
-            <span class="vsleep-runtime-name">SteamVR</span>
-            <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.steamvr.observed_up_ms) }}</span>
-            <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.steamvr.observed_down_ms) }}</span>
-            <span>? {{ formatVSleepDuration(vsleepReport.uptime.steamvr.unknown_ms) }}</span>
-          </div>
-          <div class="vsleep-runtime-row">
-            <span class="vsleep-runtime-name">VRChat</span>
-            <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.vrchat.observed_up_ms) }}</span>
-            <span>↓ {{ formatVSleepDuration(vsleepReport.uptime.vrchat.observed_down_ms) }}</span>
-            <span>? {{ formatVSleepDuration(vsleepReport.uptime.vrchat.unknown_ms) }}</span>
-          </div>
+          @if (vsleepIncidents.length > 0) {
+            <div class="vsleep-incidents">
+              <div class="vsleep-section-label">Interruption windows</div>
+              @for (incident of vsleepIncidents; track $index) {
+                <div class="vsleep-incident-row" [class.open]="incident.endTimestampUtc === null">
+                  <span class="vsleep-runtime-name">{{ vsleepIncidentLabel(incident) }}</span>
+                  <span class="vsleep-incident-range">
+                    {{ formatVSleepTime(incident.startTimestampUtc) }} →
+                    {{
+                      incident.endTimestampUtc
+                        ? formatVSleepTime(incident.endTimestampUtc)
+                        : 'open'
+                    }}
+                  </span>
+                  <span class="vsleep-incident-duration">
+                    {{ formatVSleepDuration(incident.durationMs) }}
+                  </span>
+                </div>
+              }
+            </div>
+          }
         </div>
         <div class="vsleep-timeline">
           @for (entry of vsleepTimeline; track $index) {

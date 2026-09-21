@@ -8,6 +8,7 @@ import { SleepPreparationService } from '../../../../services/sleep-preparation.
 import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
 import type {
+  VSleepIncidentWindow,
   VSleepSessionFileInfo,
   VSleepSessionReport,
   VSleepTimelineEntry,
@@ -32,6 +33,7 @@ export class OverviewViewComponent implements OnInit {
   vsleepSelectedSessionIndex = 0;
   vsleepReport: VSleepSessionReport | null = null;
   vsleepTimeline: VSleepTimelineEntry[] = [];
+  vsleepIncidents: VSleepIncidentWindow[] = [];
   vsleepReportLoading = true;
   vsleepReportFailed = false;
   private vsleepReportLoadGeneration = 0;
@@ -121,6 +123,17 @@ export class OverviewViewComponent implements OnInit {
       : entry.classification.category;
   }
 
+  protected vsleepIncidentLabel(incident: VSleepIncidentWindow): string {
+    switch (incident.category) {
+      case 'hmd_or_link_failure':
+        return 'HMD / Link';
+      case 'steam_vr_failure':
+        return 'SteamVR';
+      case 'vrchat_failure':
+        return 'VRChat';
+    }
+  }
+
   protected async refreshVSleepReport(): Promise<void> {
     const generation = ++this.vsleepReportLoadGeneration;
     const followLatest = this.vsleepSelectedSessionIndex === 0;
@@ -192,5 +205,6 @@ export class OverviewViewComponent implements OnInit {
   private applyVSleepReport(report: VSleepSessionReport | null): void {
     this.vsleepReport = report;
     this.vsleepTimeline = report ? this.vsleepReports.toTimelineEntries(report) : [];
+    this.vsleepIncidents = report ? this.vsleepReports.toIncidentWindows(report) : [];
   }
 }

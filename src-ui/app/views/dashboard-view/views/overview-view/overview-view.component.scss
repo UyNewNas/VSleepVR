@@ -105,9 +105,20 @@ app-event-log {
     min-height: 0;
   }
 
-  .vsleep-uptime {
+  .vsleep-summary-column,
+  .vsleep-uptime,
+  .vsleep-incidents {
     display: flex;
     flex-direction: column;
+  }
+
+  .vsleep-summary-column {
+    gap: 0.65em;
+    min-width: 0;
+  }
+
+  .vsleep-uptime,
+  .vsleep-incidents {
     gap: 0.35em;
   }
 
@@ -127,6 +138,42 @@ app-event-log {
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .vsleep-section-label {
+    font-size: 0.72em;
+    font-weight: 600;
+    opacity: 0.55;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .vsleep-incident-row {
+    display: grid;
+    grid-template-columns: 4.75em minmax(0, 1fr) auto;
+    gap: 0.5em;
+    align-items: center;
+    padding: 0.4em 0.55em;
+    border-radius: calc(var(--surface-border-radius) / 2);
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface-0));
+    border-left: 2px dashed var(--color-primary);
+    font-size: 0.76em;
+    white-space: nowrap;
+
+    &.open {
+      border-left-style: solid;
+    }
+  }
+
+  .vsleep-incident-range {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-incident-duration {
+    opacity: 0.62;
+    font-variant-numeric: tabular-nums;
   }
 
   .vsleep-timeline {

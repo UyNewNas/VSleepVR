@@ -40,6 +40,11 @@ export type VSleepFailureClass =
   | 'windows_power_transition'
   | 'unknown_insufficient_evidence';
 
+export type VSleepIncidentCategory = Extract<
+  VSleepFailureClass,
+  'hmd_or_link_failure' | 'steam_vr_failure' | 'vrchat_failure'
+>;
+
 export interface VSleepSessionFileInfo {
   file_name: string;
   size_bytes: number;
@@ -83,6 +88,15 @@ export interface VSleepSessionReport {
   observations: VSleepSessionEvent[];
   classifications: VSleepFailureClassification[];
   uptime: VSleepSessionUptimeSummary;
+}
+
+export interface VSleepIncidentWindow {
+  category: VSleepIncidentCategory;
+  confidence: VSleepEventConfidence;
+  startTimestampUtc: string;
+  endTimestampUtc: string | null;
+  durationMs: number | null;
+  recoveryObservation: VSleepSessionEvent | null;
 }
 
 export type VSleepTimelineEntry =
@@ -139,5 +153,105 @@ export class VSleepReportService {
       if (a.entryType === b.entryType) return 0;
       return a.entryType === 'observation' ? -1 : 1;
     });
+  }
+
+  toIncidentWindows(report: VSleepSessionReport): VSleepIncidentWindow[] {
+    type IncidentEvent =
+      | {
+          entryType: 'classification';
+          timestampUtc: string;
+          classification: VSleepFailureClassification;
+        }
+      | {
+          entryType: 'recovery';
+          timestampUtc: string;
+          observation: VSleepSessionEvent;
+        };
+
+    const events: IncidentEvent[] = [
+      ...report.classifications
+        .filter((classification) => this.isIncidentCategory(classification.category))
+        .map(
+          (classification): IncidentEvent => ({
+            entryType: 'classification',
+            timestampUtc: classification.timestamp_utc,
+            classification,
+          })
+        ),
+      ...report.observations
+        .filter((observation) => this.incidentCategoryForRecovery(observation.kind) !== null)
+        .map(
+          (observation): IncidentEvent => ({
+            entryType: 'recovery',
+            timestampUtc: observation.timestamp_utc,
+            observation,
+          })
+        ),
+    ].sort((a, b) => {
+      const timestampDelta = Date.parse(a.timestampUtc) - Date.parse(b.timestampUtc);
+      if (timestampDelta !== 0) return timestampDelta;
+      if (a.entryType === b.entryType) return 0;
+      return a.entryType === 'classification' ? -1 : 1;
+    });
+
+    const active = new Map<VSleepIncidentCategory, VSleepIncidentWindow>();
+    const windows: VSleepIncidentWindow[] = [];
+
+    for (const event of events) {
+      if (event.entryType === 'classification') {
+        if (!this.isIncidentCategory(event.classification.category)) continue;
+        if (active.has(event.classification.category)) continue;
+
+        const incident: VSleepIncidentWindow = {
+          category: event.classification.category,
+          confidence: event.classification.confidence,
+          startTimestampUtc: event.classification.timestamp_utc,
+          endTimestampUtc: null,
+          durationMs: null,
+          recoveryObservation: null,
+        };
+        active.set(event.classification.category, incident);
+        windows.push(incident);
+        continue;
+      }
+
+      const category = this.incidentCategoryForRecovery(event.observation.kind);
+      if (!category) continue;
+      const incident = active.get(category);
+      if (!incident) continue;
+
+      const startMs = Date.parse(incident.startTimestampUtc);
+      const endMs = Date.parse(event.observation.timestamp_utc);
+      incident.endTimestampUtc = event.observation.timestamp_utc;
+      incident.durationMs =
+        Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
+          ? endMs - startMs
+          : null;
+      incident.recoveryObservation = event.observation;
+      active.delete(category);
+    }
+
+    return windows;
+  }
+
+  private isIncidentCategory(category: VSleepFailureClass): category is VSleepIncidentCategory {
+    return (
+      category === 'hmd_or_link_failure' ||
+      category === 'steam_vr_failure' ||
+      category === 'vrchat_failure'
+    );
+  }
+
+  private incidentCategoryForRecovery(kind: VSleepEventKind): VSleepIncidentCategory | null {
+    switch (kind) {
+      case 'hmd_connected':
+        return 'hmd_or_link_failure';
+      case 'steam_vr_started':
+        return 'steam_vr_failure';
+      case 'vrchat_started':
+        return 'vrchat_failure';
+      default:
+        return null;
+    }
   }
 }

@@ -146,4 +146,45 @@ describe('VSleepReportService', () => {
     expect(report.observations).toHaveLength(2);
     expect(report.classifications).toHaveLength(1);
   });
+
+  it('groups an inferred interruption until an observed recovery without inventing recovery', () => {
+    const report = reportFixture();
+    report.classifications.push({
+      ...report.classifications[0],
+      timestamp_utc: '2026-09-21T02:42:00.000Z',
+    });
+    report.observations.push({
+      schema_version: 1,
+      timestamp_utc: '2026-09-21T02:47:00.000Z',
+      session_id: 'session-a',
+      source: 'open_vr',
+      kind: 'hmd_connected',
+      confidence: 'observed',
+    });
+    const service = new VSleepReportService();
+
+    const incidents = service.toIncidentWindows(report);
+
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({
+      category: 'hmd_or_link_failure',
+      confidence: 'inferred_medium',
+      startTimestampUtc: '2026-09-21T02:41:00.000Z',
+      endTimestampUtc: '2026-09-21T02:47:00.000Z',
+      durationMs: 360_000,
+    });
+    expect(incidents[0].recoveryObservation?.kind).toBe('hmd_connected');
+    expect(incidents[0].recoveryObservation?.confidence).toBe('observed');
+  });
+
+  it('leaves an interruption open when no recovery observation exists', () => {
+    const service = new VSleepReportService();
+
+    const incidents = service.toIncidentWindows(reportFixture());
+
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0].endTimestampUtc).toBeNull();
+    expect(incidents[0].durationMs).toBeNull();
+    expect(incidents[0].recoveryObservation).toBeNull();
+  });
 });
