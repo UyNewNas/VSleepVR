@@ -11,7 +11,7 @@ pub use event::{EventConfidence, EventKind, EventSource, SessionEvent};
 pub use journal::{
     JournalError, SessionFileInfo, SessionJournal, SessionJournalStore, DEFAULT_MAX_SESSION_FILES,
 };
-pub use observer::{observe_hmd_connected, observe_vrchat_process};
+pub use observer::{observe_hmd_connected, observe_steamvr_process, observe_vrchat_process};
 pub use runtime::{RuntimeError, SessionJournalRuntime};
 
 pub static INSTANCE: LazyLock<Mutex<Option<SessionJournalRuntime>>> = LazyLock::new(Default::default);
