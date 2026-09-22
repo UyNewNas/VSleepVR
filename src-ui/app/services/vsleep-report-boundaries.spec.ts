@@ -116,4 +116,38 @@ describe('VSleepReportService session boundaries', () => {
     expect(summary.startTimestampUtc).toBe('2026-09-20T23:48:00.000Z');
     expect(summary.endTimestampUtc).toBe('2026-09-20T23:47:00.000Z');
   });
+
+  it('does not certify a recording when multiple observed starts make the boundary ambiguous', () => {
+    const service = new VSleepReportService();
+    const summary = service.summarizeSessionBoundaries(
+      report([
+        observation('session_started', '2026-09-20T23:48:00.000Z'),
+        observation('session_started', '2026-09-20T23:49:00.000Z'),
+        observation('session_ended', '2026-09-21T07:31:00.000Z'),
+      ])
+    );
+
+    expect(summary).toEqual({
+      status: 'ambiguous_boundaries',
+      startTimestampUtc: null,
+      endTimestampUtc: '2026-09-21T07:31:00.000Z',
+    });
+  });
+
+  it('does not certify a recording when multiple observed ends make the boundary ambiguous', () => {
+    const service = new VSleepReportService();
+    const summary = service.summarizeSessionBoundaries(
+      report([
+        observation('session_started', '2026-09-20T23:48:00.000Z'),
+        observation('session_ended', '2026-09-21T07:30:00.000Z'),
+        observation('session_ended', '2026-09-21T07:31:00.000Z'),
+      ])
+    );
+
+    expect(summary).toEqual({
+      status: 'ambiguous_boundaries',
+      startTimestampUtc: '2026-09-20T23:48:00.000Z',
+      endTimestampUtc: null,
+    });
+  });
 });
