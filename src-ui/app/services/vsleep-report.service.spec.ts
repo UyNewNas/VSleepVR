@@ -197,6 +197,26 @@ describe('VSleepReportService', () => {
     expect(incidents[0].recoveryObservation).toBeNull();
   });
 
+  it('does not close an interruption from another session recovery observation', () => {
+    const report = reportFixture();
+    report.observations.push({
+      schema_version: 1,
+      timestamp_utc: '2026-09-21T02:47:00.000Z',
+      session_id: 'session-b',
+      source: 'open_vr',
+      kind: 'hmd_connected',
+      confidence: 'observed',
+    });
+    const service = new VSleepReportService();
+
+    const incidents = service.toIncidentWindows(report);
+
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0].endTimestampUtc).toBeNull();
+    expect(incidents[0].durationMs).toBeNull();
+    expect(incidents[0].recoveryObservation).toBeNull();
+  });
+
   it('leaves an interruption open when no recovery observation exists', () => {
     const service = new VSleepReportService();
 
