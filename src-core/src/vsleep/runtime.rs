@@ -1,6 +1,8 @@
 use super::event::{EventConfidence, EventKind, EventSource, SessionEvent};
 use super::journal::{JournalError, SessionFileInfo, SessionJournal, SessionJournalStore};
-use super::timeline::{build_session_report, SessionReport};
+use super::timeline::{
+    build_session_report, is_authoritative_reliability_observation, SessionReport,
+};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -156,40 +158,6 @@ fn canonical_session_id(file_name: &str) -> Option<&str> {
         return None;
     }
     Some(session_id)
-}
-
-fn is_authoritative_reliability_observation(event: &SessionEvent) -> bool {
-    if event.confidence != EventConfidence::Observed {
-        return false;
-    }
-
-    match event.source {
-        EventSource::Vsleep => {
-            matches!(event.kind, EventKind::SessionStarted | EventKind::SessionEnded)
-        }
-        EventSource::OpenVr => {
-            matches!(event.kind, EventKind::HmdConnected | EventKind::HmdDisconnected)
-        }
-        EventSource::SteamVr => matches!(
-            event.kind,
-            EventKind::SteamVrStarted
-                | EventKind::SteamVrStopped
-                | EventKind::SteamVrStandbyEntered
-                | EventKind::SteamVrStandbyExited
-        ),
-        EventSource::VrchatProcess => {
-            matches!(event.kind, EventKind::VrchatStarted | EventKind::VrchatStopped)
-        }
-        EventSource::VrchatLog => false,
-        EventSource::WindowsPower => matches!(
-            event.kind,
-            EventKind::WindowsSuspend | EventKind::WindowsResume | EventKind::WindowsPowerEvent
-        ),
-        EventSource::SleepMode => matches!(
-            event.kind,
-            EventKind::SleepModeEnabled | EventKind::SleepModeDisabled
-        ),
-    }
 }
 
 #[cfg(test)]
