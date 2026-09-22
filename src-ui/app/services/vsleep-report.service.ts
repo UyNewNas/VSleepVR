@@ -222,7 +222,17 @@ export class VSleepReportService {
     ];
 
     return entries.sort((a, b) => {
-      const timestampDelta = Date.parse(a.timestampUtc) - Date.parse(b.timestampUtc);
+      const aTimestamp = this.parseTimestampMs(a.timestampUtc);
+      const bTimestamp = this.parseTimestampMs(b.timestampUtc);
+      if (aTimestamp === null || bTimestamp === null) {
+        if (aTimestamp === null && bTimestamp === null) {
+          if (a.entryType === b.entryType) return 0;
+          return a.entryType === 'observation' ? -1 : 1;
+        }
+        return aTimestamp === null ? 1 : -1;
+      }
+
+      const timestampDelta = aTimestamp - bTimestamp;
       if (timestampDelta !== 0) return timestampDelta;
       if (a.entryType === b.entryType) return 0;
       return a.entryType === 'observation' ? -1 : 1;
@@ -244,7 +254,11 @@ export class VSleepReportService {
 
     const events: IncidentEvent[] = [
       ...report.classifications
-        .filter((classification) => this.isIncidentCategory(classification.category))
+        .filter(
+          (classification) =>
+            this.isIncidentCategory(classification.category) &&
+            this.parseTimestampMs(classification.timestamp_utc) !== null
+        )
         .map(
           (classification): IncidentEvent => ({
             entryType: 'classification',
@@ -258,6 +272,7 @@ export class VSleepReportService {
             report.session_id !== null &&
             observation.session_id === report.session_id &&
             observation.confidence === 'observed' &&
+            this.parseTimestampMs(observation.timestamp_utc) !== null &&
             this.incidentCategoryForRecovery(observation.kind) !== null
         )
         .map(
@@ -268,7 +283,10 @@ export class VSleepReportService {
           })
         ),
     ].sort((a, b) => {
-      const timestampDelta = Date.parse(a.timestampUtc) - Date.parse(b.timestampUtc);
+      const aTimestamp = this.parseTimestampMs(a.timestampUtc);
+      const bTimestamp = this.parseTimestampMs(b.timestampUtc);
+      if (aTimestamp === null || bTimestamp === null) return 0;
+      const timestampDelta = aTimestamp - bTimestamp;
       if (timestampDelta !== 0) return timestampDelta;
       if (a.entryType === b.entryType) return 0;
       return a.entryType === 'classification' ? -1 : 1;
@@ -300,18 +318,22 @@ export class VSleepReportService {
       const incident = active.get(category);
       if (!incident) continue;
 
-      const startMs = Date.parse(incident.startTimestampUtc);
-      const endMs = Date.parse(event.observation.timestamp_utc);
+      const startMs = this.parseTimestampMs(incident.startTimestampUtc);
+      const endMs = this.parseTimestampMs(event.observation.timestamp_utc);
+      if (startMs === null || endMs === null || endMs < startMs) continue;
+
       incident.endTimestampUtc = event.observation.timestamp_utc;
-      incident.durationMs =
-        Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs
-          ? endMs - startMs
-          : null;
+      incident.durationMs = endMs - startMs;
       incident.recoveryObservation = event.observation;
       active.delete(category);
     }
 
     return windows;
+  }
+
+  private parseTimestampMs(timestampUtc: string): number | null {
+    const timestampMs = Date.parse(timestampUtc);
+    return Number.isFinite(timestampMs) ? timestampMs : null;
   }
 
   private isIncidentCategory(category: VSleepFailureClass): category is VSleepIncidentCategory {
