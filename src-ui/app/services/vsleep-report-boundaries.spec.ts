@@ -69,6 +69,40 @@ describe('VSleepReportService session boundaries', () => {
     });
   });
 
+  it('ignores malformed boundaries instead of treating them as completeness evidence', () => {
+    const service = new VSleepReportService();
+    const summary = service.summarizeSessionBoundaries(
+      report([
+        observation('session_started', 'not-a-timestamp'),
+        observation('session_ended', '2026-09-21T07:31:00.000Z'),
+      ])
+    );
+
+    expect(summary).toEqual({
+      status: 'missing_start',
+      startTimestampUtc: null,
+      endTimestampUtc: '2026-09-21T07:31:00.000Z',
+    });
+  });
+
+  it('lets valid observed boundaries prove completeness despite malformed boundary noise', () => {
+    const service = new VSleepReportService();
+    const summary = service.summarizeSessionBoundaries(
+      report([
+        observation('session_started', 'not-a-timestamp'),
+        observation('session_ended', 'also-not-a-timestamp'),
+        observation('session_ended', '2026-09-21T07:31:00.000Z'),
+        observation('session_started', '2026-09-20T23:48:00.000Z'),
+      ])
+    );
+
+    expect(summary).toEqual({
+      status: 'complete',
+      startTimestampUtc: '2026-09-20T23:48:00.000Z',
+      endTimestampUtc: '2026-09-21T07:31:00.000Z',
+    });
+  });
+
   it('keeps reversed observed boundaries visibly invalid rather than calling them complete', () => {
     const service = new VSleepReportService();
     const summary = service.summarizeSessionBoundaries(
