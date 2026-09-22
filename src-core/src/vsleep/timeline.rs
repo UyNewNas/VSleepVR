@@ -56,89 +56,134 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
     // parseable timestamps in chronological order. A complete observed recording
     // also bounds the analysis window so pre/post-session evidence cannot mutate
     // in-session classifier state.
+    //
+    // Events sharing the same millisecond are treated as a simultaneous batch:
+    // failure-like observations in such a batch are not causally ordered against
+    // their peers, and runtime state changes are applied only after the whole batch
+    // is classified. This keeps equal-timestamp JSONL append order from changing a
+    // later diagnosis.
     let analysis_events = session_id
         .map(|_| chronological_valid_events(events))
         .unwrap_or_default();
     let mut steamvr_running = None;
     let mut vrchat_running = None;
     let mut classifications = Vec::new();
+    let mut index = 0;
 
-    for event in analysis_events {
-        match event.kind {
-            EventKind::SteamVrStarted => steamvr_running = Some(true),
-            EventKind::SteamVrStopped => {
-                classifications.push(if vrchat_running == Some(true) {
-                    classify(
-                        event,
-                        FailureClass::SteamVrFailure,
-                        EventConfidence::InferredMedium,
-                        vec![EventKind::SteamVrStopped, EventKind::VrchatStarted],
-                        "SteamVR stopped while VRChat was last observed running. The stop is real, but its cause is not yet known.",
-                    )
-                } else {
-                    unknown(
-                        event,
-                        "SteamVR stopped without a correlated live VRChat observation, so a runtime failure cannot be distinguished from an intentional stop or a broader shutdown.",
-                    )
-                });
-                steamvr_running = Some(false);
-            }
-            EventKind::VrchatStarted => vrchat_running = Some(true),
-            EventKind::VrchatStopped => {
-                classifications.push(if steamvr_running == Some(true) {
-                    classify(
-                        event,
-                        FailureClass::VrchatFailure,
-                        EventConfidence::InferredMedium,
-                        vec![EventKind::VrchatStopped, EventKind::SteamVrStarted],
-                        "VRChat stopped while SteamVR was last observed running. The process exit is real, but its cause is not yet known.",
-                    )
-                } else {
-                    unknown(
-                        event,
-                        "VRChat stopped without a correlated live SteamVR observation, so an application failure cannot be distinguished from an intentional or system-wide shutdown.",
-                    )
-                });
-                vrchat_running = Some(false);
-            }
-            EventKind::HmdDisconnected => {
-                classifications.push(if steamvr_running == Some(true) && vrchat_running == Some(true) {
-                    classify(
-                        event,
-                        FailureClass::HmdOrLinkFailure,
-                        EventConfidence::InferredMedium,
-                        vec![
-                            EventKind::HmdDisconnected,
-                            EventKind::SteamVrStarted,
-                            EventKind::VrchatStarted,
-                        ],
-                        "The HMD disconnected while SteamVR and VRChat were both last observed running. This supports an HMD/Link corridor failure, but does not distinguish headset, cable, Air Link, or transport causes.",
-                    )
-                } else {
-                    unknown(
-                        event,
-                        "The HMD disconnected without enough correlated SteamVR and VRChat state to attribute the interruption to the HMD/Link corridor.",
-                    )
-                });
-            }
-            EventKind::WindowsSuspend | EventKind::WindowsResume => {
-                classifications.push(classify(
-                    event,
-                    FailureClass::WindowsPowerTransition,
-                    EventConfidence::Observed,
-                    vec![event.kind],
-                    "A Windows suspend/resume transition was directly observed. No additional failure cause is inferred.",
-                ));
-            }
-            EventKind::SessionStarted
-            | EventKind::SessionEnded
-            | EventKind::HmdConnected
-            | EventKind::SteamVrStandbyEntered
-            | EventKind::SteamVrStandbyExited
-            | EventKind::WindowsPowerEvent
-            | EventKind::SleepModeEnabled
-            | EventKind::SleepModeDisabled => {}
+    while index < analysis_events.len() {
+        let timestamp = analysis_events[index].0;
+        let mut batch_end = index + 1;
+        while batch_end < analysis_events.len() && analysis_events[batch_end].0 == timestamp {
+            batch_end += 1;
         }
+
+        let batch = &analysis_events[index..batch_end];
+        let ambiguous_same_timestamp = batch.len() > 1;
+
+        for (_, event) in batch.iter().copied() {
+            match event.kind {
+                EventKind::SteamVrStarted => {}
+                EventKind::SteamVrStopped => {
+                    classifications.push(if ambiguous_same_timestamp {
+                        unknown(
+                            event,
+                            "Multiple observed reliability transitions share this timestamp, so their causal order is unknown and the SteamVR stop is not attributed to a specific failure.",
+                        )
+                    } else if vrchat_running == Some(true) {
+                        classify(
+                            event,
+                            FailureClass::SteamVrFailure,
+                            EventConfidence::InferredMedium,
+                            vec![EventKind::SteamVrStopped, EventKind::VrchatStarted],
+                            "SteamVR stopped while VRChat was last observed running. The stop is real, but its cause is not yet known.",
+                        )
+                    } else {
+                        unknown(
+                            event,
+                            "SteamVR stopped without a correlated live VRChat observation, so a runtime failure cannot be distinguished from an intentional stop or a broader shutdown.",
+                        )
+                    });
+                }
+                EventKind::VrchatStarted => {}
+                EventKind::VrchatStopped => {
+                    classifications.push(if ambiguous_same_timestamp {
+                        unknown(
+                            event,
+                            "Multiple observed reliability transitions share this timestamp, so their causal order is unknown and the VRChat stop is not attributed to a specific failure.",
+                        )
+                    } else if steamvr_running == Some(true) {
+                        classify(
+                            event,
+                            FailureClass::VrchatFailure,
+                            EventConfidence::InferredMedium,
+                            vec![EventKind::VrchatStopped, EventKind::SteamVrStarted],
+                            "VRChat stopped while SteamVR was last observed running. The process exit is real, but its cause is not yet known.",
+                        )
+                    } else {
+                        unknown(
+                            event,
+                            "VRChat stopped without a correlated live SteamVR observation, so an application failure cannot be distinguished from an intentional or system-wide shutdown.",
+                        )
+                    });
+                }
+                EventKind::HmdDisconnected => {
+                    classifications.push(if ambiguous_same_timestamp {
+                        unknown(
+                            event,
+                            "Multiple observed reliability transitions share this timestamp, so their causal order is unknown and the HMD disconnect is not attributed to a specific runtime corridor.",
+                        )
+                    } else if steamvr_running == Some(true) && vrchat_running == Some(true) {
+                        classify(
+                            event,
+                            FailureClass::HmdOrLinkFailure,
+                            EventConfidence::InferredMedium,
+                            vec![
+                                EventKind::HmdDisconnected,
+                                EventKind::SteamVrStarted,
+                                EventKind::VrchatStarted,
+                            ],
+                            "The HMD disconnected while SteamVR and VRChat were both last observed running. This supports an HMD/Link corridor failure, but does not distinguish headset, cable, Air Link, or transport causes.",
+                        )
+                    } else {
+                        unknown(
+                            event,
+                            "The HMD disconnected without enough correlated SteamVR and VRChat state to attribute the interruption to the HMD/Link corridor.",
+                        )
+                    });
+                }
+                EventKind::WindowsSuspend | EventKind::WindowsResume => {
+                    classifications.push(classify(
+                        event,
+                        FailureClass::WindowsPowerTransition,
+                        EventConfidence::Observed,
+                        vec![event.kind],
+                        "A Windows suspend/resume transition was directly observed. No additional failure cause is inferred.",
+                    ));
+                }
+                EventKind::SessionStarted
+                | EventKind::SessionEnded
+                | EventKind::HmdConnected
+                | EventKind::SteamVrStandbyEntered
+                | EventKind::SteamVrStandbyExited
+                | EventKind::WindowsPowerEvent
+                | EventKind::SleepModeEnabled
+                | EventKind::SleepModeDisabled => {}
+            }
+        }
+
+        steamvr_running = runtime_state_after_batch(
+            steamvr_running,
+            batch,
+            EventKind::SteamVrStarted,
+            EventKind::SteamVrStopped,
+        );
+        vrchat_running = runtime_state_after_batch(
+            vrchat_running,
+            batch,
+            EventKind::VrchatStarted,
+            EventKind::VrchatStopped,
+        );
+        index = batch_end;
     }
 
     SessionReport {
@@ -151,6 +196,27 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
     }
 }
 
+fn runtime_state_after_batch(
+    current: Option<bool>,
+    batch: &[(i64, &SessionEvent)],
+    started_kind: EventKind,
+    stopped_kind: EventKind,
+) -> Option<bool> {
+    let saw_started = batch
+        .iter()
+        .any(|(_, event)| event.kind == started_kind);
+    let saw_stopped = batch
+        .iter()
+        .any(|(_, event)| event.kind == stopped_kind);
+
+    match (saw_started, saw_stopped) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        (true, true) => None,
+        (false, false) => current,
+    }
+}
+
 fn unambiguous_session_id(events: &[SessionEvent]) -> Option<&str> {
     let session_id = events.first()?.session_id.as_str();
     events
@@ -159,7 +225,7 @@ fn unambiguous_session_id(events: &[SessionEvent]) -> Option<&str> {
         .then_some(session_id)
 }
 
-fn chronological_valid_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
+fn chronological_valid_events(events: &[SessionEvent]) -> Vec<(i64, &SessionEvent)> {
     let complete_window = complete_observed_session_window(events);
     let mut timed_events: Vec<(i64, &SessionEvent)> = events
         .iter()
@@ -177,9 +243,6 @@ fn chronological_valid_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
         .collect();
     timed_events.sort_by_key(|(timestamp, _)| *timestamp);
     timed_events
-        .into_iter()
-        .map(|(_, event)| event)
-        .collect()
 }
 
 fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64)> {
@@ -295,25 +358,52 @@ fn summarize_runtime(
     let mut summary = RuntimeUptimeSummary::default();
     let mut state = None;
     let mut last_timestamp = window_start;
+    let mut index = 0;
 
-    for (timestamp, kind) in events {
-        let Some(next_state) = state_for(*kind) else {
-            continue;
-        };
+    while index < events.len() {
+        let timestamp = events[index].0;
+        let mut batch_end = index + 1;
+        while batch_end < events.len() && events[batch_end].0 == timestamp {
+            batch_end += 1;
+        }
 
-        if let Some(current_state) = state {
-            add_duration(
-                &mut summary,
-                current_state,
-                millis_between(last_timestamp, *timestamp),
-            );
-            if current_state != next_state {
-                summary.transitions += 1;
+        let mut saw_up = false;
+        let mut saw_down = false;
+        for (_, kind) in &events[index..batch_end] {
+            match state_for(*kind) {
+                Some(RuntimeState::Up) => saw_up = true,
+                Some(RuntimeState::Down) => saw_down = true,
+                None => {}
             }
         }
 
-        state = Some(next_state);
-        last_timestamp = *timestamp;
+        if saw_up || saw_down {
+            if let Some(current_state) = state {
+                add_duration(
+                    &mut summary,
+                    current_state,
+                    millis_between(last_timestamp, timestamp),
+                );
+            }
+
+            let next_state = match (saw_up, saw_down) {
+                (true, false) => Some(RuntimeState::Up),
+                (false, true) => Some(RuntimeState::Down),
+                (true, true) => None,
+                (false, false) => unreachable!("runtime state batch must contain a state signal"),
+            };
+
+            if let (Some(current_state), Some(next_state)) = (state, next_state) {
+                if current_state != next_state {
+                    summary.transitions += 1;
+                }
+            }
+
+            state = next_state;
+            last_timestamp = timestamp;
+        }
+
+        index = batch_end;
     }
 
     if let Some(current_state) = state {
@@ -509,6 +599,47 @@ mod tests {
             report.classifications[0].timestamp_utc,
             "2026-09-21T00:30:00Z"
         );
+    }
+
+    #[test]
+    fn same_timestamp_state_changes_are_conservative_and_append_order_independent() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let forward = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:05:00Z"),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::SteamVrStopped, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ]);
+        let reverse = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:05:00Z"),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::SteamVrStopped, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ]);
+
+        assert_eq!(forward.classifications, reverse.classifications);
+        assert_eq!(forward.classifications.len(), 2);
+        assert!(forward
+            .classifications
+            .iter()
+            .all(|classification| classification.category == FailureClass::UnknownInsufficientEvidence));
+        assert_eq!(
+            forward.uptime.steamvr,
+            RuntimeUptimeSummary {
+                observed_up_ms: 10 * MINUTE_MS,
+                observed_down_ms: 0,
+                unknown_ms: 50 * MINUTE_MS,
+                transitions: 0,
+            }
+        );
+        assert_eq!(forward.uptime.steamvr, reverse.uptime.steamvr);
     }
 
     #[test]
