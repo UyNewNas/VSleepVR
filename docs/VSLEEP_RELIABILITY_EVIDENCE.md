@@ -25,7 +25,9 @@ A source/kind mismatch must remain visible in `SessionReport.observations` but m
 
 The source-authority policy has one implementation point: `timeline::is_authoritative_reliability_observation`. Both direct core report construction and the persisted-session adapter consume that predicate, so source/kind trust cannot silently drift between the two paths.
 
-The current observe-only producer functions are also covered from the write side by `producer_contract_tests::observe_only_producers_emit_only_authoritative_observed_pairs`. That regression invokes the real HMD, SteamVR-process, and VRChat-process observer entry points, checks their exact `source + kind + observed` tuples, and verifies that the persisted journal contains only authority-qualified rows plus the VSleep session boundaries. This complements the classifier-side 420-combination authority matrix with a producer-side contract.
+The current observe-only HMD, SteamVR-process, and VRChat-process producers also route their writes through `observer::record_authoritative_observation`. That guard checks the same shared authority predicate before persistence and drops a mismatched `observed` row instead of allowing a future producer-edit bug to enter the journal as reliability evidence. The generic journal API intentionally remains permissive so inferred, forensic, legacy, or externally reconstructed rows can still be retained and shown without being promoted into derived reliability.
+
+The real producer functions are covered from the write side by `producer_contract_tests::observe_only_producers_emit_only_authoritative_observed_pairs`, while `observer::tests::production_observer_guard_rejects_non_authoritative_observed_rows_before_persistence` verifies the new fail-closed write guard itself. The producer contract regression invokes the real HMD, SteamVR-process, and VRChat-process observer entry points, checks their exact `source + kind + observed` tuples, and verifies that the persisted journal contains only authority-qualified rows plus the VSleep session boundaries. This complements the classifier-side 420-combination authority matrix with a producer-side contract.
 
 ## Derivation invariants
 
@@ -65,6 +67,7 @@ For any new producer or event kind, reviewers should check:
 
 - whether the producer directly observes the fact or merely infers it;
 - whether `timeline::is_authoritative_reliability_observation` accepts or rejects the pair intentionally;
+- whether reliability-authoritative production writes pass through the fail-closed observer guard rather than calling the generic journal writer directly;
 - whether the real producer path is covered by a producer-side contract test, not only by classifier fixtures;
 - whether the same row is accepted identically by core and persisted report construction;
 - whether wrong-source rows remain present in `observations` but inert for derivation;
