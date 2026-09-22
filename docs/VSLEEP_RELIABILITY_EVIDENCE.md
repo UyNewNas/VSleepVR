@@ -23,6 +23,8 @@ An event participates in derived reliability only when both conditions hold:
 
 A source/kind mismatch must remain visible in `SessionReport.observations` but must not establish runtime state, alter the authoritative session window, emit a derived power classification, or contribute to observed uptime.
 
+The source-authority policy has one implementation point: `timeline::is_authoritative_reliability_observation`. Both direct core report construction and the persisted-session adapter consume that predicate, so source/kind trust cannot silently drift between the two paths.
+
 ## Derivation invariants
 
 Derived reliability obeys all of the following rules:
@@ -57,15 +59,12 @@ A report must never turn absence of evidence into downtime.
 
 ## Anti-drift review checklist
 
-The source-authority policy is currently enforced in both the core timeline path and persisted-session adapter. Until that policy is physically extracted into one shared helper, every change to `EventSource`, `EventKind`, or the table above must verify both paths stay identical.
-
 For any new producer or event kind, reviewers should check:
 
 - whether the producer directly observes the fact or merely infers it;
+- whether `timeline::is_authoritative_reliability_observation` accepts or rejects the pair intentionally;
 - whether the same row is accepted identically by core and persisted report construction;
 - whether wrong-source rows remain present in `observations` but inert for derivation;
 - whether equal-timestamp ordering is append-order independent;
 - whether complete-session windowing is applied consistently to classification and uptime;
 - whether tests cover both an accepted source/kind pair and a rejected near-miss pair.
-
-The next implementation cleanup should extract this authority predicate into one shared core helper so the two call paths cannot silently diverge.
