@@ -109,14 +109,35 @@ impl SessionJournalRuntime {
 
     pub fn read_session_report(&self, file_name: &str) -> Result<SessionReport, RuntimeError> {
         let events = self.read_session(file_name)?;
-        let report_events = match canonical_session_id(file_name) {
+        let canonical_session_id = canonical_session_id(file_name);
+        let report_events: Vec<SessionEvent> = match canonical_session_id {
             Some(session_id) => events
                 .into_iter()
                 .filter(|event| event.session_id == session_id)
                 .collect(),
             None => events,
         };
-        Ok(build_session_report(&report_events))
+
+        let mut chronological_events: Vec<(i64, SessionEvent)> = report_events
+            .iter()
+            .filter_map(|event| {
+                chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
+                    .ok()
+                    .map(|timestamp| (timestamp.timestamp_millis(), event.clone()))
+            })
+            .collect();
+        chronological_events.sort_by_key(|(timestamp, _)| *timestamp);
+        let chronological_events: Vec<SessionEvent> = chronological_events
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect();
+
+        let mut report = build_session_report(&chronological_events);
+        report.session_id = canonical_session_id
+            .map(str::to_string)
+            .or_else(|| report_events.first().map(|event| event.session_id.clone()));
+        report.observations = report_events;
+        Ok(report)
     }
 }
 
@@ -252,6 +273,114 @@ mod tests {
             .observations
             .iter()
             .all(|event| event.session_id == session_id));
+        assert!(report.classifications.is_empty());
+    }
+
+    #[test]
+    fn persisted_report_classifies_valid_events_in_timestamp_order_without_reordering_observations() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+
+        let session_id = runtime.start_session().unwrap();
+        runtime.finish_session().unwrap();
+
+        let sessions = runtime.list_sessions().unwrap();
+        let file_name = &sessions[0].file_name;
+        let mut appended_events = [
+            SessionEvent::new(
+                &session_id,
+                EventSource::OpenVr,
+                EventKind::HmdDisconnected,
+                EventConfidence::Observed,
+            ),
+            SessionEvent::new(
+                &session_id,
+                EventSource::VrchatProcess,
+                EventKind::VrchatStarted,
+                EventConfidence::Observed,
+            ),
+            SessionEvent::new(
+                &session_id,
+                EventSource::SteamVr,
+                EventKind::SteamVrStarted,
+                EventConfidence::Observed,
+            ),
+        ];
+        appended_events[0].timestamp_utc = "2099-01-01T00:30:00Z".to_string();
+        appended_events[1].timestamp_utc = "2099-01-01T00:20:00Z".to_string();
+        appended_events[2].timestamp_utc = "2099-01-01T00:10:00Z".to_string();
+
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(directory.path().join(file_name))
+            .unwrap();
+        for event in &appended_events {
+            writeln!(file, "{}", serde_json::to_string(event).unwrap()).unwrap();
+        }
+
+        let raw_events = runtime.read_session(file_name).unwrap();
+        let report = runtime.read_session_report(file_name).unwrap();
+
+        assert_eq!(report.observations, raw_events);
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            crate::vsleep::FailureClass::HmdOrLinkFailure
+        );
+        assert_eq!(
+            report.classifications[0].timestamp_utc,
+            "2099-01-01T00:30:00Z"
+        );
+    }
+
+    #[test]
+    fn persisted_report_keeps_malformed_timestamp_evidence_but_excludes_it_from_classification() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+
+        let session_id = runtime.start_session().unwrap();
+        runtime.finish_session().unwrap();
+
+        let sessions = runtime.list_sessions().unwrap();
+        let file_name = &sessions[0].file_name;
+        let mut events = [
+            SessionEvent::new(
+                &session_id,
+                EventSource::SteamVr,
+                EventKind::SteamVrStarted,
+                EventConfidence::Observed,
+            ),
+            SessionEvent::new(
+                &session_id,
+                EventSource::VrchatProcess,
+                EventKind::VrchatStarted,
+                EventConfidence::Observed,
+            ),
+            SessionEvent::new(
+                &session_id,
+                EventSource::OpenVr,
+                EventKind::HmdDisconnected,
+                EventConfidence::Observed,
+            ),
+        ];
+        events[0].timestamp_utc = "2099-01-01T00:10:00Z".to_string();
+        events[1].timestamp_utc = "2099-01-01T00:20:00Z".to_string();
+        events[2].timestamp_utc = "malformed-timestamp".to_string();
+
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(directory.path().join(file_name))
+            .unwrap();
+        for event in &events {
+            writeln!(file, "{}", serde_json::to_string(event).unwrap()).unwrap();
+        }
+
+        let report = runtime.read_session_report(file_name).unwrap();
+
+        assert!(report
+            .observations
+            .iter()
+            .any(|event| event.timestamp_utc == "malformed-timestamp"));
         assert!(report.classifications.is_empty());
     }
 }
