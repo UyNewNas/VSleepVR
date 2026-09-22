@@ -156,9 +156,14 @@ export class VSleepReportService {
         (observation) =>
           observation.session_id === report.session_id &&
           observation.confidence === 'observed' &&
+          this.parseTimestampMs(observation.timestamp_utc) !== null &&
           (observation.kind === 'session_started' || observation.kind === 'session_ended')
       )
-      .sort((a, b) => Date.parse(a.timestamp_utc) - Date.parse(b.timestamp_utc));
+      .sort(
+        (a, b) =>
+          (this.parseTimestampMs(a.timestamp_utc) ?? 0) -
+          (this.parseTimestampMs(b.timestamp_utc) ?? 0)
+      );
 
     const start = boundaryEvents.find((observation) => observation.kind === 'session_started') ?? null;
     const end =
@@ -186,9 +191,9 @@ export class VSleepReportService {
       };
     }
 
-    const startMs = Date.parse(start.timestamp_utc);
-    const endMs = Date.parse(end.timestamp_utc);
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    const startMs = this.parseTimestampMs(start.timestamp_utc);
+    const endMs = this.parseTimestampMs(end.timestamp_utc);
+    if (startMs === null || endMs === null || endMs < startMs) {
       return {
         status: 'invalid_order',
         startTimestampUtc: start.timestamp_utc,
