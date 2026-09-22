@@ -50,7 +50,8 @@ export type VSleepSessionBoundaryStatus =
   | 'missing_start'
   | 'missing_end'
   | 'missing_both'
-  | 'invalid_order';
+  | 'invalid_order'
+  | 'ambiguous_boundaries';
 
 export interface VSleepSessionFileInfo {
   file_name: string;
@@ -165,9 +166,19 @@ export class VSleepReportService {
           (this.parseTimestampMs(b.timestamp_utc) ?? 0)
       );
 
-    const start = boundaryEvents.find((observation) => observation.kind === 'session_started') ?? null;
-    const end =
-      [...boundaryEvents].reverse().find((observation) => observation.kind === 'session_ended') ?? null;
+    const starts = boundaryEvents.filter((observation) => observation.kind === 'session_started');
+    const ends = boundaryEvents.filter((observation) => observation.kind === 'session_ended');
+
+    if (starts.length > 1 || ends.length > 1) {
+      return {
+        status: 'ambiguous_boundaries',
+        startTimestampUtc: starts.length === 1 ? starts[0].timestamp_utc : null,
+        endTimestampUtc: ends.length === 1 ? ends[0].timestamp_utc : null,
+      };
+    }
+
+    const start = starts[0] ?? null;
+    const end = ends[0] ?? null;
 
     if (!start && !end) {
       return {
