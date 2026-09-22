@@ -494,9 +494,9 @@ mod tests {
     #[test]
     fn keeps_observations_separate_from_inferred_hmd_link_failure() {
         let events = vec![
-            event(EventKind::SteamVrStarted),
-            event(EventKind::VrchatStarted),
-            event(EventKind::HmdDisconnected),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
         ];
 
         let report = build_session_report(&events);
@@ -531,8 +531,8 @@ mod tests {
     #[test]
     fn classifies_peer_process_stop_only_when_other_runtime_is_known_alive() {
         let report = build_session_report(&[
-            event(EventKind::VrchatStarted),
-            event(EventKind::SteamVrStopped),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::SteamVrStopped, "2026-09-21T00:20:00Z"),
         ]);
 
         assert_eq!(report.classifications.len(), 1);
