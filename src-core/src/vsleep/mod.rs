@@ -7,6 +7,8 @@ mod runtime;
 mod timeline;
 
 #[cfg(test)]
+mod producer_contract_tests;
+#[cfg(test)]
 mod reliability_contract_tests;
 
 use std::{path::PathBuf, sync::LazyLock};
