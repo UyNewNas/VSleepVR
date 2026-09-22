@@ -1,4 +1,7 @@
-use super::{EventConfidence, EventKind, EventSource, RuntimeError, SessionEvent, INSTANCE};
+use super::{
+    timeline::is_authoritative_reliability_observation, EventConfidence, EventKind, EventSource,
+    RuntimeError, SessionEvent, SessionJournalRuntime, INSTANCE,
+};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -173,10 +176,10 @@ pub async fn observe_hmd_connected(connected: bool) -> Result<Option<SessionEven
     } else {
         EventKind::HmdDisconnected
     };
-    let event = runtime.record_if_active(
+    let event = record_authoritative_observation(
+        runtime,
         EventSource::OpenVr,
         kind,
-        EventConfidence::Observed,
         BTreeMap::new(),
     )?;
 
@@ -222,12 +225,7 @@ pub async fn observe_steamvr_process(
         "process_count".to_string(),
         serde_json::Value::from(process_count as u64),
     );
-    let event = runtime.record_if_active(
-        EventSource::SteamVr,
-        kind,
-        EventConfidence::Observed,
-        metadata,
-    )?;
+    let event = record_authoritative_observation(runtime, EventSource::SteamVr, kind, metadata)?;
 
     if event.is_some() {
         *previous = Some(ProcessObservation {
@@ -272,12 +270,8 @@ pub async fn observe_vrchat_process(
         "process_count".to_string(),
         serde_json::Value::from(process_count as u64),
     );
-    let event = runtime.record_if_active(
-        EventSource::VrchatProcess,
-        kind,
-        EventConfidence::Observed,
-        metadata,
-    )?;
+    let event =
+        record_authoritative_observation(runtime, EventSource::VrchatProcess, kind, metadata)?;
 
     if event.is_some() {
         *previous = Some(ProcessObservation {
@@ -286,6 +280,36 @@ pub async fn observe_vrchat_process(
         });
     }
     Ok(event)
+}
+
+/// Writes a reliability-authoritative observer row only when its source/kind pair is part of the
+/// shared evidence contract. The generic journal API remains permissive so forensic or inferred
+/// rows can still be retained, but the production observer path fails closed before persistence
+/// if a future edit accidentally mismatches an observed producer and event kind.
+fn record_authoritative_observation(
+    runtime: &SessionJournalRuntime,
+    source: EventSource,
+    kind: EventKind,
+    metadata: BTreeMap<String, serde_json::Value>,
+) -> Result<Option<SessionEvent>, RuntimeError> {
+    let Some(session_id) = runtime.active_session_id() else {
+        return Ok(None);
+    };
+
+    let candidate = SessionEvent::new(session_id, source, kind, EventConfidence::Observed);
+    if !is_authoritative_reliability_observation(&candidate) {
+        log::error!(
+            "[VSleep] Refusing non-authoritative observed reliability row: source={source:?}, kind={kind:?}"
+        );
+        return Ok(None);
+    }
+
+    runtime.record_if_active(
+        source,
+        kind,
+        EventConfidence::Observed,
+        metadata,
+    )
 }
 
 async fn has_active_session() -> bool {
@@ -353,5 +377,28 @@ mod tests {
         assert!(!same_process_observation(Some(&previous), "session-a", false));
         assert!(!same_process_observation(Some(&previous), "session-b", true));
         assert!(!same_process_observation(None, "session-a", true));
+    }
+
+    #[test]
+    fn production_observer_guard_rejects_non_authoritative_observed_rows_before_persistence() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+        runtime.start_session().unwrap();
+
+        let rejected = record_authoritative_observation(
+            &runtime,
+            EventSource::VrchatLog,
+            EventKind::SteamVrStarted,
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(rejected.is_none());
+
+        runtime.finish_session().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
+        let events = runtime.read_session(&sessions[0].file_name).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, EventKind::SessionStarted);
+        assert_eq!(events[1].kind, EventKind::SessionEnded);
     }
 }
