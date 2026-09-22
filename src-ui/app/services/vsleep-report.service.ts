@@ -220,6 +220,7 @@ export class VSleepReportService {
   }
 
   toTimelineEntries(report: VSleepSessionReport): VSleepTimelineEntry[] {
+    const boundary = this.summarizeSessionBoundaries(report);
     const entries: VSleepTimelineEntry[] = [
       ...report.observations.map(
         (observation): VSleepTimelineEntry => ({
@@ -228,13 +229,17 @@ export class VSleepReportService {
           observation,
         })
       ),
-      ...report.classifications.map(
-        (classification): VSleepTimelineEntry => ({
-          entryType: 'classification',
-          timestampUtc: classification.timestamp_utc,
-          classification,
-        })
-      ),
+      ...report.classifications
+        .filter((classification) =>
+          this.isTimestampWithinRecording(classification.timestamp_utc, boundary)
+        )
+        .map(
+          (classification): VSleepTimelineEntry => ({
+            entryType: 'classification',
+            timestampUtc: classification.timestamp_utc,
+            classification,
+          })
+        ),
     ];
 
     return entries.sort((a, b) => {
