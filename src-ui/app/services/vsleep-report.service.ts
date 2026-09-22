@@ -268,12 +268,13 @@ export class VSleepReportService {
           observation: VSleepSessionEvent;
         };
 
+    const boundary = this.summarizeSessionBoundaries(report);
     const events: IncidentEvent[] = [
       ...report.classifications
         .filter(
           (classification) =>
             this.isIncidentCategory(classification.category) &&
-            this.parseTimestampMs(classification.timestamp_utc) !== null
+            this.isTimestampWithinRecording(classification.timestamp_utc, boundary)
         )
         .map(
           (classification): IncidentEvent => ({
@@ -288,7 +289,7 @@ export class VSleepReportService {
             report.session_id !== null &&
             observation.session_id === report.session_id &&
             observation.confidence === 'observed' &&
-            this.parseTimestampMs(observation.timestamp_utc) !== null &&
+            this.isTimestampWithinRecording(observation.timestamp_utc, boundary) &&
             this.incidentCategoryForRecovery(observation.kind) !== null
         )
         .map(
@@ -345,6 +346,21 @@ export class VSleepReportService {
     }
 
     return windows;
+  }
+
+  private isTimestampWithinRecording(
+    timestampUtc: string,
+    boundary: VSleepSessionBoundarySummary
+  ): boolean {
+    const timestampMs = this.parseTimestampMs(timestampUtc);
+    if (timestampMs === null) return false;
+    if (boundary.status !== 'complete') return true;
+
+    const startMs = boundary.startTimestampUtc
+      ? this.parseTimestampMs(boundary.startTimestampUtc)
+      : null;
+    const endMs = boundary.endTimestampUtc ? this.parseTimestampMs(boundary.endTimestampUtc) : null;
+    return startMs !== null && endMs !== null && timestampMs >= startMs && timestampMs <= endMs;
   }
 
   private parseTimestampMs(timestampUtc: string): number | null {
