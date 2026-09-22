@@ -148,6 +148,8 @@ export class OverviewViewComponent implements OnInit {
         return 'Partial · session boundaries missing';
       case 'invalid_order':
         return 'Invalid · boundary order';
+      case 'ambiguous_boundaries':
+        return 'Ambiguous · duplicate session boundaries';
     }
   }
 
