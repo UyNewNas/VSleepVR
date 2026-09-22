@@ -255,6 +255,8 @@ export class VSleepReportService {
       ...report.observations
         .filter(
           (observation) =>
+            report.session_id !== null &&
+            observation.session_id === report.session_id &&
             observation.confidence === 'observed' &&
             this.incidentCategoryForRecovery(observation.kind) !== null
         )
