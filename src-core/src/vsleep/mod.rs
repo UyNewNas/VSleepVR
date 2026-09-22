@@ -6,6 +6,9 @@ mod observer;
 mod runtime;
 mod timeline;
 
+#[cfg(test)]
+mod reliability_contract_tests;
+
 use std::{path::PathBuf, sync::LazyLock};
 use tokio::sync::Mutex;
 
