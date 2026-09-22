@@ -119,6 +119,31 @@
     } @else if (vsleepReport) {
       <div class="vsleep-report-body">
         <div class="vsleep-summary-column">
+          @if (vsleepBoundary) {
+            <div class="vsleep-incidents">
+              <div class="vsleep-section-label">Recording integrity</div>
+              <div
+                class="vsleep-incident-row"
+                [class.open]="vsleepBoundary.status !== 'complete'"
+              >
+                <span class="vsleep-runtime-name">Journal</span>
+                <span class="vsleep-incident-range">{{ vsleepBoundaryLabel(vsleepBoundary) }}</span>
+                <span class="vsleep-incident-duration">
+                  @if (vsleepBoundary.startTimestampUtc) {
+                    {{ formatVSleepTime(vsleepBoundary.startTimestampUtc) }}
+                  } @else {
+                    —
+                  }
+                  →
+                  @if (vsleepBoundary.endTimestampUtc) {
+                    {{ formatVSleepTime(vsleepBoundary.endTimestampUtc) }}
+                  } @else {
+                    —
+                  }
+                </span>
+              </div>
+            </div>
+          }
           <div class="vsleep-uptime">
             <div class="vsleep-runtime-row">
               <span class="vsleep-runtime-name">HMD</span>

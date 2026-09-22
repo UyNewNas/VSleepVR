@@ -9,6 +9,7 @@ import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
 import type {
   VSleepIncidentWindow,
+  VSleepSessionBoundarySummary,
   VSleepSessionFileInfo,
   VSleepSessionReport,
   VSleepTimelineEntry,
@@ -32,6 +33,7 @@ export class OverviewViewComponent implements OnInit {
   vsleepSessions: VSleepSessionFileInfo[] = [];
   vsleepSelectedSessionIndex = 0;
   vsleepReport: VSleepSessionReport | null = null;
+  vsleepBoundary: VSleepSessionBoundarySummary | null = null;
   vsleepTimeline: VSleepTimelineEntry[] = [];
   vsleepIncidents: VSleepIncidentWindow[] = [];
   vsleepReportLoading = true;
@@ -134,6 +136,21 @@ export class OverviewViewComponent implements OnInit {
     }
   }
 
+  protected vsleepBoundaryLabel(boundary: VSleepSessionBoundarySummary): string {
+    switch (boundary.status) {
+      case 'complete':
+        return 'Complete recording';
+      case 'missing_start':
+        return 'Partial · start boundary missing';
+      case 'missing_end':
+        return 'Partial · end boundary missing';
+      case 'missing_both':
+        return 'Partial · session boundaries missing';
+      case 'invalid_order':
+        return 'Invalid · boundary order';
+    }
+  }
+
   protected async refreshVSleepReport(): Promise<void> {
     const generation = ++this.vsleepReportLoadGeneration;
     const followLatest = this.vsleepSelectedSessionIndex === 0;
@@ -204,6 +221,7 @@ export class OverviewViewComponent implements OnInit {
 
   private applyVSleepReport(report: VSleepSessionReport | null): void {
     this.vsleepReport = report;
+    this.vsleepBoundary = report ? this.vsleepReports.summarizeSessionBoundaries(report) : null;
     this.vsleepTimeline = report ? this.vsleepReports.toTimelineEntries(report) : [];
     this.vsleepIncidents = report ? this.vsleepReports.toIncidentWindows(report) : [];
   }
