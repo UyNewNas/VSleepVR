@@ -52,9 +52,10 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
 
     // Classification is stateful, so append order must never be allowed to make a
     // later observation influence an earlier failure inference. Keep raw evidence
-    // untouched for the report, but analyze only parseable timestamps in
-    // chronological order. A complete observed recording also bounds the analysis
-    // window so pre/post-session evidence cannot mutate in-session classifier state.
+    // untouched for the report, but analyze only directly observed events with
+    // parseable timestamps in chronological order. A complete observed recording
+    // also bounds the analysis window so pre/post-session evidence cannot mutate
+    // in-session classifier state.
     let analysis_events = session_id
         .map(|_| chronological_valid_events(events))
         .unwrap_or_default();
@@ -162,6 +163,7 @@ fn chronological_valid_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
     let complete_window = complete_observed_session_window(events);
     let mut timed_events: Vec<(i64, &SessionEvent)> = events
         .iter()
+        .filter(|event| event.confidence == EventConfidence::Observed)
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                 .ok()
@@ -219,6 +221,7 @@ fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64
 fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
     let mut timed_events: Vec<(i64, EventKind)> = events
         .iter()
+        .filter(|event| event.confidence == EventConfidence::Observed)
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                 .ok()
@@ -554,6 +557,61 @@ mod tests {
         assert_eq!(
             report.classifications[0].timestamp_utc,
             "2026-09-21T00:10:00Z"
+        );
+    }
+
+    #[test]
+    fn inferred_observations_cannot_drive_classification_or_observed_uptime() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let mut inferred_steamvr =
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z");
+        inferred_steamvr.confidence = EventConfidence::InferredHigh;
+        let mut inferred_suspend =
+            event_at(EventKind::WindowsSuspend, "2026-09-21T00:40:00Z");
+        inferred_suspend.confidence = EventConfidence::InferredHigh;
+        let events = vec![
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            inferred_steamvr,
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+            inferred_suspend,
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            FailureClass::UnknownInsufficientEvidence
+        );
+        assert_eq!(
+            report.classifications[0].timestamp_utc,
+            "2026-09-21T00:30:00Z"
+        );
+        assert!(!report
+            .classifications
+            .iter()
+            .any(|classification| classification.category == FailureClass::WindowsPowerTransition));
+        assert_eq!(
+            report.uptime.steamvr,
+            RuntimeUptimeSummary {
+                observed_up_ms: 0,
+                observed_down_ms: 0,
+                unknown_ms: 60 * MINUTE_MS,
+                transitions: 0,
+            }
+        );
+        assert_eq!(
+            report.uptime.vrchat,
+            RuntimeUptimeSummary {
+                observed_up_ms: 40 * MINUTE_MS,
+                observed_down_ms: 0,
+                unknown_ms: 20 * MINUTE_MS,
+                transitions: 0,
+            }
         );
     }
 
