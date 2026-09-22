@@ -8,6 +8,7 @@ use std::{
     fmt::{Display, Formatter},
     path::PathBuf,
 };
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -108,13 +109,33 @@ impl SessionJournalRuntime {
 
     pub fn read_session_report(&self, file_name: &str) -> Result<SessionReport, RuntimeError> {
         let events = self.read_session(file_name)?;
-        Ok(build_session_report(&events))
+        let report_events = match canonical_session_id(file_name) {
+            Some(session_id) => events
+                .into_iter()
+                .filter(|event| event.session_id == session_id)
+                .collect(),
+            None => events,
+        };
+        Ok(build_session_report(&report_events))
     }
+}
+
+fn canonical_session_id(file_name: &str) -> Option<&str> {
+    let stem = file_name.strip_suffix(".jsonl")?;
+    let (timestamp, session_id) = stem.split_once('-')?;
+    if timestamp.len() != 20
+        || !timestamp.bytes().all(|byte| byte.is_ascii_digit())
+        || Uuid::parse_str(session_id).is_err()
+    {
+        return None;
+    }
+    Some(session_id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs::OpenOptions, io::Write};
 
     #[test]
     fn owns_exactly_one_active_session_and_exposes_it_for_observers() {
@@ -197,5 +218,40 @@ mod tests {
             report.classifications[0].category,
             crate::vsleep::FailureClass::HmdOrLinkFailure
         );
+    }
+
+    #[test]
+    fn canonical_session_report_quarantines_foreign_session_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+
+        let session_id = runtime.start_session().unwrap();
+        runtime.finish_session().unwrap();
+
+        let sessions = runtime.list_sessions().unwrap();
+        let file_name = &sessions[0].file_name;
+        let foreign_event = SessionEvent::new(
+            "foreign-session",
+            EventSource::WindowsPower,
+            EventKind::WindowsSuspend,
+            EventConfidence::Observed,
+        );
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(directory.path().join(file_name))
+            .unwrap();
+        writeln!(file, "{}", serde_json::to_string(&foreign_event).unwrap()).unwrap();
+
+        let raw_events = runtime.read_session(file_name).unwrap();
+        assert_eq!(raw_events.len(), 3);
+
+        let report = runtime.read_session_report(file_name).unwrap();
+        assert_eq!(report.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(report.observations.len(), 2);
+        assert!(report
+            .observations
+            .iter()
+            .all(|event| event.session_id == session_id));
+        assert!(report.classifications.is_empty());
     }
 }
