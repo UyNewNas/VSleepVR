@@ -1,4 +1,4 @@
-use super::event::{EventConfidence, EventKind, SessionEvent};
+use super::event::{EventConfidence, EventKind, EventSource, SessionEvent};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,11 +225,45 @@ fn unambiguous_session_id(events: &[SessionEvent]) -> Option<&str> {
         .then_some(session_id)
 }
 
+fn is_authoritative_reliability_observation(event: &SessionEvent) -> bool {
+    if event.confidence != EventConfidence::Observed {
+        return false;
+    }
+
+    match event.source {
+        EventSource::Vsleep => {
+            matches!(event.kind, EventKind::SessionStarted | EventKind::SessionEnded)
+        }
+        EventSource::OpenVr => {
+            matches!(event.kind, EventKind::HmdConnected | EventKind::HmdDisconnected)
+        }
+        EventSource::SteamVr => matches!(
+            event.kind,
+            EventKind::SteamVrStarted
+                | EventKind::SteamVrStopped
+                | EventKind::SteamVrStandbyEntered
+                | EventKind::SteamVrStandbyExited
+        ),
+        EventSource::VrchatProcess => {
+            matches!(event.kind, EventKind::VrchatStarted | EventKind::VrchatStopped)
+        }
+        EventSource::VrchatLog => false,
+        EventSource::WindowsPower => matches!(
+            event.kind,
+            EventKind::WindowsSuspend | EventKind::WindowsResume | EventKind::WindowsPowerEvent
+        ),
+        EventSource::SleepMode => matches!(
+            event.kind,
+            EventKind::SleepModeEnabled | EventKind::SleepModeDisabled
+        ),
+    }
+}
+
 fn chronological_valid_events(events: &[SessionEvent]) -> Vec<(i64, &SessionEvent)> {
     let complete_window = complete_observed_session_window(events);
     let mut timed_events: Vec<(i64, &SessionEvent)> = events
         .iter()
-        .filter(|event| event.confidence == EventConfidence::Observed)
+        .filter(|event| is_authoritative_reliability_observation(event))
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                 .ok()
@@ -250,7 +284,7 @@ fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64
         .iter()
         .filter(|event| {
             event.kind == EventKind::SessionStarted
-                && event.confidence == EventConfidence::Observed
+                && is_authoritative_reliability_observation(event)
         })
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
@@ -266,7 +300,7 @@ fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64
         .iter()
         .filter(|event| {
             event.kind == EventKind::SessionEnded
-                && event.confidence == EventConfidence::Observed
+                && is_authoritative_reliability_observation(event)
         })
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
@@ -284,7 +318,7 @@ fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64
 fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
     let mut timed_events: Vec<(i64, EventKind)> = events
         .iter()
-        .filter(|event| event.confidence == EventConfidence::Observed)
+        .filter(|event| is_authoritative_reliability_observation(event))
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                 .ok()
@@ -741,6 +775,59 @@ mod tests {
                 observed_up_ms: 40 * MINUTE_MS,
                 observed_down_ms: 0,
                 unknown_ms: 20 * MINUTE_MS,
+                transitions: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn core_report_requires_authoritative_sources_for_derived_reliability() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let mut forged_boundary =
+            event_at(EventKind::SessionStarted, "2026-09-21T00:05:00Z");
+        forged_boundary.source = EventSource::OpenVr;
+        let mut forged_steamvr =
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z");
+        forged_steamvr.source = EventSource::VrchatLog;
+        let mut forged_suspend =
+            event_at(EventKind::WindowsSuspend, "2026-09-21T00:40:00Z");
+        forged_suspend.source = EventSource::Vsleep;
+
+        let events = vec![
+            event_at(EventKind::HmdDisconnected, "2026-09-20T23:50:00Z"),
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            forged_boundary,
+            forged_steamvr,
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+            forged_suspend,
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            FailureClass::UnknownInsufficientEvidence
+        );
+        assert_eq!(
+            report.classifications[0].timestamp_utc,
+            "2026-09-21T00:30:00Z"
+        );
+        assert!(!report
+            .classifications
+            .iter()
+            .any(|classification| classification.category == FailureClass::WindowsPowerTransition));
+        assert_eq!(report.uptime.observed_window_ms, Some(60 * MINUTE_MS));
+        assert_eq!(
+            report.uptime.steamvr,
+            RuntimeUptimeSummary {
+                observed_up_ms: 0,
+                observed_down_ms: 0,
+                unknown_ms: 60 * MINUTE_MS,
                 transitions: 0,
             }
         );
