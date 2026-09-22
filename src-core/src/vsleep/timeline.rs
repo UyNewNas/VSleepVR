@@ -45,11 +45,18 @@ pub struct SessionReport {
 }
 
 pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
+    // Derived reliability data is only meaningful when every observation belongs
+    // to one unambiguous session. Preserve mixed-session evidence verbatim, but do
+    // not choose a session on the caller's behalf or correlate state across them.
+    let session_id = unambiguous_session_id(events);
+
     // Classification is stateful, so append order must never be allowed to make a
     // later observation influence an earlier failure inference. Keep raw evidence
     // untouched for the report, but analyze only parseable timestamps in
     // chronological order.
-    let analysis_events = chronological_valid_events(events);
+    let analysis_events = session_id
+        .map(|_| chronological_valid_events(events))
+        .unwrap_or_default();
     let mut steamvr_running = None;
     let mut vrchat_running = None;
     let mut classifications = Vec::new();
@@ -133,11 +140,21 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
     }
 
     SessionReport {
-        session_id: events.first().map(|event| event.session_id.clone()),
+        session_id: session_id.map(str::to_string),
         observations: events.to_vec(),
         classifications,
-        uptime: build_uptime_summary(events),
+        uptime: session_id
+            .map(|_| build_uptime_summary(events))
+            .unwrap_or_default(),
     }
+}
+
+fn unambiguous_session_id(events: &[SessionEvent]) -> Option<&str> {
+    let session_id = events.first()?.session_id.as_str();
+    events
+        .iter()
+        .all(|event| event.session_id.as_str() == session_id)
+        .then_some(session_id)
 }
 
 fn chronological_valid_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
@@ -400,6 +417,24 @@ mod tests {
             report.classifications[0].confidence,
             EventConfidence::Observed
         );
+    }
+
+    #[test]
+    fn mixed_session_input_preserves_observations_but_refuses_derived_data() {
+        let mut foreign_vrchat = event_at(EventKind::VrchatStarted, "2026-09-21T00:20:00Z");
+        foreign_vrchat.session_id = "session-b".to_string();
+        let events = vec![
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+            foreign_vrchat,
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.session_id, None);
+        assert_eq!(report.observations, events);
+        assert!(report.classifications.is_empty());
+        assert_eq!(report.uptime, SessionUptimeSummary::default());
     }
 
     #[test]
