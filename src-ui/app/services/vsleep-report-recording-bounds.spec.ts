@@ -105,4 +105,28 @@ describe('VSleepReportService recording-bounded incident windows', () => {
     expect(incidents).toHaveLength(1);
     expect(incidents[0].startTimestampUtc).toBe('2026-09-21T08:00:00.000Z');
   });
+
+  it('does not let a wrong-source observed event forge a complete recording boundary', () => {
+    const report = reportFixture();
+    report.observations = [
+      observation('session_started', '2026-09-20T23:48:00.000Z'),
+      {
+        ...observation('session_ended', '2026-09-21T07:31:00.000Z'),
+        source: 'open_vr',
+      },
+    ];
+    report.classifications = [classification('2026-09-21T08:00:00.000Z')];
+
+    const service = new VSleepReportService();
+    const boundary = service.summarizeSessionBoundaries(report);
+    const incidents = service.toIncidentWindows(report);
+
+    expect(boundary).toEqual({
+      status: 'missing_end',
+      startTimestampUtc: '2026-09-20T23:48:00.000Z',
+      endTimestampUtc: null,
+    });
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0].startTimestampUtc).toBe('2026-09-21T08:00:00.000Z');
+  });
 });
