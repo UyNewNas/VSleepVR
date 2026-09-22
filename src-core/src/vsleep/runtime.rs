@@ -118,8 +118,13 @@ impl SessionJournalRuntime {
             None => events,
         };
 
+        // A persisted event only participates in derived reliability when both its
+        // confidence and producer agree with the fact being asserted. Keep every
+        // same-session row in `observations` for forensics, but do not let an
+        // observed label from an unrelated producer establish runtime state.
         let mut chronological_events: Vec<(i64, SessionEvent)> = report_events
             .iter()
+            .filter(|event| is_authoritative_reliability_observation(event))
             .filter_map(|event| {
                 chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                     .ok()
@@ -153,10 +158,54 @@ fn canonical_session_id(file_name: &str) -> Option<&str> {
     Some(session_id)
 }
 
+fn is_authoritative_reliability_observation(event: &SessionEvent) -> bool {
+    if event.confidence != EventConfidence::Observed {
+        return false;
+    }
+
+    match event.source {
+        EventSource::Vsleep => {
+            matches!(event.kind, EventKind::SessionStarted | EventKind::SessionEnded)
+        }
+        EventSource::OpenVr => {
+            matches!(event.kind, EventKind::HmdConnected | EventKind::HmdDisconnected)
+        }
+        EventSource::SteamVr => matches!(
+            event.kind,
+            EventKind::SteamVrStarted
+                | EventKind::SteamVrStopped
+                | EventKind::SteamVrStandbyEntered
+                | EventKind::SteamVrStandbyExited
+        ),
+        EventSource::VrchatProcess => {
+            matches!(event.kind, EventKind::VrchatStarted | EventKind::VrchatStopped)
+        }
+        EventSource::VrchatLog => false,
+        EventSource::WindowsPower => matches!(
+            event.kind,
+            EventKind::WindowsSuspend | EventKind::WindowsResume | EventKind::WindowsPowerEvent
+        ),
+        EventSource::SleepMode => matches!(
+            event.kind,
+            EventKind::SleepModeEnabled | EventKind::SleepModeDisabled
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs::OpenOptions, io::Write};
+
+    fn rewrite_session_fixture(path: &std::path::Path, events: &[SessionEvent]) {
+        let mut body = events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        body.push('\n');
+        std::fs::write(path, body).unwrap();
+    }
 
     #[test]
     fn owns_exactly_one_active_session_and_exposes_it_for_observers() {
@@ -277,6 +326,59 @@ mod tests {
     }
 
     #[test]
+    fn persisted_report_requires_authoritative_sources_for_observed_reliability() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+
+        let session_id = runtime.start_session().unwrap();
+        for (source, kind) in [
+            (EventSource::VrchatLog, EventKind::SteamVrStarted),
+            (EventSource::VrchatProcess, EventKind::VrchatStarted),
+            (EventSource::OpenVr, EventKind::HmdDisconnected),
+            (EventSource::Vsleep, EventKind::WindowsSuspend),
+        ] {
+            runtime
+                .record_if_active(
+                    source,
+                    kind,
+                    EventConfidence::Observed,
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        runtime.finish_session().unwrap();
+
+        let sessions = runtime.list_sessions().unwrap();
+        let report = runtime
+            .read_session_report(&sessions[0].file_name)
+            .unwrap();
+
+        assert_eq!(report.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(report.observations.len(), 6);
+        assert!(report.observations.iter().any(|event| {
+            event.source == EventSource::VrchatLog && event.kind == EventKind::SteamVrStarted
+        }));
+        assert!(report.observations.iter().any(|event| {
+            event.source == EventSource::Vsleep && event.kind == EventKind::WindowsSuspend
+        }));
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            crate::vsleep::FailureClass::UnknownInsufficientEvidence
+        );
+        assert!(!report.classifications.iter().any(|classification| {
+            classification.category == crate::vsleep::FailureClass::WindowsPowerTransition
+        }));
+        assert_eq!(report.uptime.steamvr.observed_up_ms, 0);
+        assert_eq!(report.uptime.steamvr.observed_down_ms, 0);
+        assert_eq!(report.uptime.steamvr.transitions, 0);
+        assert_eq!(
+            report.uptime.steamvr.unknown_ms,
+            report.uptime.observed_window_ms.unwrap()
+        );
+    }
+
+    #[test]
     fn persisted_report_classifies_valid_events_in_timestamp_order_without_reordering_observations() {
         let directory = tempfile::tempdir().unwrap();
         let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
@@ -286,37 +388,40 @@ mod tests {
 
         let sessions = runtime.list_sessions().unwrap();
         let file_name = &sessions[0].file_name;
-        let mut appended_events = [
-            SessionEvent::new(
-                &session_id,
-                EventSource::OpenVr,
-                EventKind::HmdDisconnected,
-                EventConfidence::Observed,
-            ),
-            SessionEvent::new(
-                &session_id,
-                EventSource::VrchatProcess,
-                EventKind::VrchatStarted,
-                EventConfidence::Observed,
-            ),
-            SessionEvent::new(
-                &session_id,
-                EventSource::SteamVr,
-                EventKind::SteamVrStarted,
-                EventConfidence::Observed,
-            ),
-        ];
-        appended_events[0].timestamp_utc = "2099-01-01T00:30:00Z".to_string();
-        appended_events[1].timestamp_utc = "2099-01-01T00:20:00Z".to_string();
-        appended_events[2].timestamp_utc = "2099-01-01T00:10:00Z".to_string();
+        let mut boundaries = runtime.read_session(file_name).unwrap();
+        boundaries[0].timestamp_utc = "2099-01-01T00:00:00Z".to_string();
+        boundaries[1].timestamp_utc = "2099-01-01T01:00:00Z".to_string();
 
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(directory.path().join(file_name))
-            .unwrap();
-        for event in &appended_events {
-            writeln!(file, "{}", serde_json::to_string(event).unwrap()).unwrap();
-        }
+        let mut hmd = SessionEvent::new(
+            &session_id,
+            EventSource::OpenVr,
+            EventKind::HmdDisconnected,
+            EventConfidence::Observed,
+        );
+        hmd.timestamp_utc = "2099-01-01T00:30:00Z".to_string();
+        let mut vrchat = SessionEvent::new(
+            &session_id,
+            EventSource::VrchatProcess,
+            EventKind::VrchatStarted,
+            EventConfidence::Observed,
+        );
+        vrchat.timestamp_utc = "2099-01-01T00:20:00Z".to_string();
+        let mut steamvr = SessionEvent::new(
+            &session_id,
+            EventSource::SteamVr,
+            EventKind::SteamVrStarted,
+            EventConfidence::Observed,
+        );
+        steamvr.timestamp_utc = "2099-01-01T00:10:00Z".to_string();
+
+        let fixture = vec![
+            boundaries[0].clone(),
+            hmd,
+            vrchat,
+            steamvr,
+            boundaries[1].clone(),
+        ];
+        rewrite_session_fixture(&directory.path().join(file_name), &fixture);
 
         let raw_events = runtime.read_session(file_name).unwrap();
         let report = runtime.read_session_report(file_name).unwrap();
@@ -343,37 +448,40 @@ mod tests {
 
         let sessions = runtime.list_sessions().unwrap();
         let file_name = &sessions[0].file_name;
-        let mut events = [
-            SessionEvent::new(
-                &session_id,
-                EventSource::SteamVr,
-                EventKind::SteamVrStarted,
-                EventConfidence::Observed,
-            ),
-            SessionEvent::new(
-                &session_id,
-                EventSource::VrchatProcess,
-                EventKind::VrchatStarted,
-                EventConfidence::Observed,
-            ),
-            SessionEvent::new(
-                &session_id,
-                EventSource::OpenVr,
-                EventKind::HmdDisconnected,
-                EventConfidence::Observed,
-            ),
-        ];
-        events[0].timestamp_utc = "2099-01-01T00:10:00Z".to_string();
-        events[1].timestamp_utc = "2099-01-01T00:20:00Z".to_string();
-        events[2].timestamp_utc = "malformed-timestamp".to_string();
+        let mut boundaries = runtime.read_session(file_name).unwrap();
+        boundaries[0].timestamp_utc = "2099-01-01T00:00:00Z".to_string();
+        boundaries[1].timestamp_utc = "2099-01-01T01:00:00Z".to_string();
 
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(directory.path().join(file_name))
-            .unwrap();
-        for event in &events {
-            writeln!(file, "{}", serde_json::to_string(event).unwrap()).unwrap();
-        }
+        let mut steamvr = SessionEvent::new(
+            &session_id,
+            EventSource::SteamVr,
+            EventKind::SteamVrStarted,
+            EventConfidence::Observed,
+        );
+        steamvr.timestamp_utc = "2099-01-01T00:10:00Z".to_string();
+        let mut vrchat = SessionEvent::new(
+            &session_id,
+            EventSource::VrchatProcess,
+            EventKind::VrchatStarted,
+            EventConfidence::Observed,
+        );
+        vrchat.timestamp_utc = "2099-01-01T00:20:00Z".to_string();
+        let mut hmd = SessionEvent::new(
+            &session_id,
+            EventSource::OpenVr,
+            EventKind::HmdDisconnected,
+            EventConfidence::Observed,
+        );
+        hmd.timestamp_utc = "malformed-timestamp".to_string();
+
+        let fixture = vec![
+            boundaries[0].clone(),
+            steamvr,
+            vrchat,
+            hmd,
+            boundaries[1].clone(),
+        ];
+        rewrite_session_fixture(&directory.path().join(file_name), &fixture);
 
         let report = runtime.read_session_report(file_name).unwrap();
 
