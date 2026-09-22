@@ -59,6 +59,30 @@ describe('VSleepReportService recording-bounded incident windows', () => {
     expect(incidents[0].startTimestampUtc).toBe('2026-09-21T02:41:00.000Z');
   });
 
+  it('keeps raw outside-window observations visible but hides derived classifications there', () => {
+    const report = reportFixture();
+    report.observations.push(observation('hmd_disconnected', '2026-09-20T23:40:00.000Z'));
+    report.classifications = [
+      classification('2026-09-20T23:40:00.000Z'),
+      classification('2026-09-21T02:41:00.000Z'),
+      classification('2026-09-21T07:40:00.000Z'),
+    ];
+
+    const timeline = new VSleepReportService().toTimelineEntries(report);
+    const classificationTimestamps = timeline
+      .filter((entry) => entry.entryType === 'classification')
+      .map((entry) => entry.timestampUtc);
+
+    expect(classificationTimestamps).toEqual(['2026-09-21T02:41:00.000Z']);
+    expect(
+      timeline.some(
+        (entry) =>
+          entry.entryType === 'observation' &&
+          entry.observation.timestamp_utc === '2026-09-20T23:40:00.000Z'
+      )
+    ).toBe(true);
+  });
+
   it('does not use a recovery observed after a complete session ended', () => {
     const report = reportFixture();
     report.classifications = [classification('2026-09-21T07:30:00.000Z')];
