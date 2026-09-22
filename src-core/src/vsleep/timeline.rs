@@ -225,7 +225,7 @@ fn unambiguous_session_id(events: &[SessionEvent]) -> Option<&str> {
         .then_some(session_id)
 }
 
-fn is_authoritative_reliability_observation(event: &SessionEvent) -> bool {
+pub(crate) fn is_authoritative_reliability_observation(event: &SessionEvent) -> bool {
     if event.confidence != EventConfidence::Observed {
         return false;
     }
