@@ -156,6 +156,7 @@ export class VSleepReportService {
       .filter(
         (observation) =>
           observation.session_id === report.session_id &&
+          observation.source === 'vsleep' &&
           observation.confidence === 'observed' &&
           this.parseTimestampMs(observation.timestamp_utc) !== null &&
           (observation.kind === 'session_started' || observation.kind === 'session_ended')
