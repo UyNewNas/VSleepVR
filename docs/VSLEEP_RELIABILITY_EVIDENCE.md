@@ -25,6 +25,8 @@ A source/kind mismatch must remain visible in `SessionReport.observations` but m
 
 The source-authority policy has one implementation point: `timeline::is_authoritative_reliability_observation`. Both direct core report construction and the persisted-session adapter consume that predicate, so source/kind trust cannot silently drift between the two paths.
 
+The current observe-only producer functions are also covered from the write side by `producer_contract_tests::observe_only_producers_emit_only_authoritative_observed_pairs`. That regression invokes the real HMD, SteamVR-process, and VRChat-process observer entry points, checks their exact `source + kind + observed` tuples, and verifies that the persisted journal contains only authority-qualified rows plus the VSleep session boundaries. This complements the classifier-side 420-combination authority matrix with a producer-side contract.
+
 ## Derivation invariants
 
 Derived reliability obeys all of the following rules:
@@ -63,6 +65,7 @@ For any new producer or event kind, reviewers should check:
 
 - whether the producer directly observes the fact or merely infers it;
 - whether `timeline::is_authoritative_reliability_observation` accepts or rejects the pair intentionally;
+- whether the real producer path is covered by a producer-side contract test, not only by classifier fixtures;
 - whether the same row is accepted identically by core and persisted report construction;
 - whether wrong-source rows remain present in `observations` but inert for derivation;
 - whether equal-timestamp ordering is append-order independent;
