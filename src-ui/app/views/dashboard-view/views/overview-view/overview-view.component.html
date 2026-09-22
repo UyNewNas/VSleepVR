@@ -107,7 +107,8 @@
         </button>
         @if (vsleepReport) {
           <span class="vsleep-report-window">
-            {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
+            {{ vsleepBoundary?.status === 'complete' ? 'complete session' : 'observed fragment' }}
+            · {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
           </span>
         }
       </div>
@@ -145,6 +146,14 @@
             </div>
           }
           <div class="vsleep-uptime">
+            <div class="vsleep-section-label">
+              Runtime durations ·
+              {{
+                vsleepBoundary?.status === 'complete'
+                  ? 'complete session'
+                  : 'observed fragment only'
+              }}
+            </div>
             <div class="vsleep-runtime-row">
               <span class="vsleep-runtime-name">HMD</span>
               <span>↑ {{ formatVSleepDuration(vsleepReport.uptime.hmd.observed_up_ms) }}</span>
@@ -172,11 +181,13 @@
                   <span class="vsleep-runtime-name">{{ vsleepIncidentLabel(incident) }}</span>
                   <span class="vsleep-incident-range">
                     {{ formatVSleepTime(incident.startTimestampUtc) }} →
-                    {{
-                      incident.endTimestampUtc
-                        ? formatVSleepTime(incident.endTimestampUtc)
-                        : 'open'
-                    }}
+                    @if (incident.endTimestampUtc) {
+                      {{ formatVSleepTime(incident.endTimestampUtc) }}
+                    } @else if (vsleepBoundary?.status === 'complete') {
+                      unresolved at session end
+                    } @else {
+                      recovery not observed before journal cutoff
+                    }
                   </span>
                   <span class="vsleep-incident-duration">
                     {{ formatVSleepDuration(incident.durationMs) }}
