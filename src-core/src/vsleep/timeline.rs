@@ -173,6 +173,42 @@ fn chronological_valid_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
         .collect()
 }
 
+fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64)> {
+    let mut starts = events
+        .iter()
+        .filter(|event| {
+            event.kind == EventKind::SessionStarted
+                && event.confidence == EventConfidence::Observed
+        })
+        .filter_map(|event| {
+            chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
+                .ok()
+                .map(|timestamp| timestamp.timestamp_millis())
+        });
+    let start = starts.next()?;
+    if starts.next().is_some() {
+        return None;
+    }
+
+    let mut ends = events
+        .iter()
+        .filter(|event| {
+            event.kind == EventKind::SessionEnded
+                && event.confidence == EventConfidence::Observed
+        })
+        .filter_map(|event| {
+            chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
+                .ok()
+                .map(|timestamp| timestamp.timestamp_millis())
+        });
+    let end = ends.next()?;
+    if ends.next().is_some() {
+        return None;
+    }
+
+    (start <= end).then_some((start, end))
+}
+
 fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
     let mut timed_events: Vec<(i64, EventKind)> = events
         .iter()
@@ -188,14 +224,20 @@ fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
     }
 
     timed_events.sort_by_key(|(timestamp, _)| *timestamp);
-    let window_start = timed_events.first().expect("non-empty timeline").0;
-    let window_end = timed_events.last().expect("non-empty timeline").0;
+    let fallback_start = timed_events.first().expect("non-empty timeline").0;
+    let fallback_end = timed_events.last().expect("non-empty timeline").0;
+    let (window_start, window_end) =
+        complete_observed_session_window(events).unwrap_or((fallback_start, fallback_end));
     let observed_window_ms = millis_between(window_start, window_end);
+    let bounded_events: Vec<(i64, EventKind)> = timed_events
+        .into_iter()
+        .filter(|(timestamp, _)| *timestamp >= window_start && *timestamp <= window_end)
+        .collect();
 
     SessionUptimeSummary {
         observed_window_ms: Some(observed_window_ms),
         hmd: summarize_runtime(
-            &timed_events,
+            &bounded_events,
             window_start,
             window_end,
             |kind| match kind {
@@ -205,7 +247,7 @@ fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
             },
         ),
         steamvr: summarize_runtime(
-            &timed_events,
+            &bounded_events,
             window_start,
             window_end,
             |kind| match kind {
@@ -215,7 +257,7 @@ fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
             },
         ),
         vrchat: summarize_runtime(
-            &timed_events,
+            &bounded_events,
             window_start,
             window_end,
             |kind| match kind {
@@ -541,6 +583,34 @@ mod tests {
                 observed_up_ms: 30 * MINUTE_MS,
                 observed_down_ms: 15 * MINUTE_MS,
                 unknown_ms: 15 * MINUTE_MS,
+                transitions: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn uptime_summary_uses_complete_session_bounds_and_ignores_outside_runtime_events() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let events = vec![
+            event_at(EventKind::VrchatStarted, "2026-09-20T23:50:00Z"),
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::VrchatStopped, "2026-09-21T00:40:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T01:10:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.uptime.observed_window_ms, Some(60 * MINUTE_MS));
+        assert_eq!(
+            report.uptime.vrchat,
+            RuntimeUptimeSummary {
+                observed_up_ms: 30 * MINUTE_MS,
+                observed_down_ms: 20 * MINUTE_MS,
+                unknown_ms: 10 * MINUTE_MS,
                 transitions: 1,
             }
         );
