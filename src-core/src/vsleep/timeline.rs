@@ -45,11 +45,16 @@ pub struct SessionReport {
 }
 
 pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
+    // Classification is stateful, so append order must never be allowed to make a
+    // later observation influence an earlier failure inference. Keep raw evidence
+    // untouched for the report, but analyze only parseable timestamps in
+    // chronological order.
+    let analysis_events = chronological_valid_events(events);
     let mut steamvr_running = None;
     let mut vrchat_running = None;
     let mut classifications = Vec::new();
 
-    for event in events {
+    for event in analysis_events {
         match event.kind {
             EventKind::SteamVrStarted => steamvr_running = Some(true),
             EventKind::SteamVrStopped => {
@@ -133,6 +138,22 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
         classifications,
         uptime: build_uptime_summary(events),
     }
+}
+
+fn chronological_valid_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
+    let mut timed_events: Vec<(i64, &SessionEvent)> = events
+        .iter()
+        .filter_map(|event| {
+            chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
+                .ok()
+                .map(|timestamp| (timestamp.timestamp_millis(), event))
+        })
+        .collect();
+    timed_events.sort_by_key(|(timestamp, _)| *timestamp);
+    timed_events
+        .into_iter()
+        .map(|(_, event)| event)
+        .collect()
 }
 
 fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
@@ -378,6 +399,50 @@ mod tests {
         assert_eq!(
             report.classifications[0].confidence,
             EventConfidence::Observed
+        );
+    }
+
+    #[test]
+    fn classification_uses_chronological_valid_events_without_reordering_observations() {
+        let events = vec![
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            FailureClass::HmdOrLinkFailure
+        );
+        assert_eq!(
+            report.classifications[0].timestamp_utc,
+            "2026-09-21T00:30:00Z"
+        );
+    }
+
+    #[test]
+    fn malformed_timestamp_evidence_cannot_mutate_classification_state() {
+        let events = vec![
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::VrchatStarted, "malformed-timestamp"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:30:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert!(report
+            .observations
+            .iter()
+            .any(|event| event.timestamp_utc == "malformed-timestamp"));
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            FailureClass::UnknownInsufficientEvidence
         );
     }
 
