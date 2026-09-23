@@ -184,6 +184,9 @@
                 <div class="vsleep-incident-row" [class.open]="incident.endTimestampUtc === null">
                   <span class="vsleep-runtime-name">{{ vsleepIncidentLabel(incident) }}</span>
                   <span class="vsleep-incident-range">
+                    <span class="vsleep-incident-confidence">
+                      ◇ {{ vsleepIncidentTrustLabel(incident) }} ·
+                    </span>
                     {{ formatVSleepTime(incident.startTimestampUtc) }} →
                     @if (incident.endTimestampUtc) {
                       {{ formatVSleepTime(incident.endTimestampUtc) }}
@@ -205,7 +208,7 @@
           @for (entry of vsleepTimeline; track $index) {
             <div
               class="vsleep-timeline-entry"
-              [class.inference]="entry.entryType === 'classification'"
+              [class.inference]="vsleepTimelineEntryIsInference(entry)"
             >
               <span class="vsleep-timeline-time">{{ formatVSleepTime(entry.timestampUtc) }}</span>
               <span class="vsleep-timeline-marker">{{ vsleepTimelineMarker(entry) }}</span>
@@ -218,7 +221,7 @@
                     </span>
                   } @else {
                     <span class="vsleep-timeline-confidence">
-                      · {{ entry.classification.confidence }}
+                      · {{ vsleepClassificationTrustLabel(entry) }}
                     </span>
                   }
                 </div>
