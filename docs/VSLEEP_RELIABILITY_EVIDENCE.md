@@ -74,6 +74,18 @@ Examples:
 - `vrchat_stopped` may support `vrchat_failure` only when SteamVR was already authoritatively observed running.
 - `windows_suspend` / `windows_resume` from `windows_power` are direct power-transition observations; no extra root cause is inferred.
 
+## Derived classification payload integrity
+
+`SessionReport.classifications` is backend-owned derived data, so the Tauri-to-UI boundary validates it more strictly than raw forensic observations. Classification timestamps must be parseable, rationales must be non-empty, unknown categories/evidence enum values fail closed, and each current category must match the confidence/evidence contract emitted by `timeline.rs`:
+
+- `hmd_or_link_failure`: `inferred_medium` with `hmd_disconnected`, `steam_vr_started`, `vrchat_started` evidence;
+- `steam_vr_failure`: `inferred_medium` with `steam_vr_stopped`, `vrchat_started` evidence;
+- `vrchat_failure`: `inferred_medium` with `vrchat_stopped`, `steam_vr_started` evidence;
+- `windows_power_transition`: `observed` with exactly one `windows_suspend` or `windows_resume` evidence item;
+- `unknown_insufficient_evidence`: `inferred_low` with exactly one HMD/SteamVR/VRChat failure-like trigger observation.
+
+This strictness is intentional. Raw journal source/kind strings stay forward-compatible and visible for future forensic producers, but a future backend change to derived classification semantics must update the frontend contract in the same reviewed change instead of silently being trusted as an existing diagnosis. Validation failure remains read-only and never rewrites the journal or initiates recovery.
+
 ## Uptime accounting rule
 
 `observed_up_ms` and `observed_down_ms` may use only authoritative observed runtime-state transitions. Time before the first known state, time after an ambiguity collapses state to unknown, and intervals unsupported by authoritative evidence remain `unknown_ms`.
@@ -96,4 +108,5 @@ For any new producer or event kind, reviewers should check:
 - whether wrong-source rows remain present in `observations` but inert for derivation;
 - whether equal-timestamp ordering is append-order independent;
 - whether complete and partial session bounds are applied consistently to classification, uptime, recording completeness, and the frontend report view;
+- whether backend-owned derived classification enum/confidence/evidence changes update the frontend runtime schema in the same reviewed change;
 - whether tests cover both an accepted source/kind pair and a rejected near-miss pair.
