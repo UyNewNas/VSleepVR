@@ -31,12 +31,20 @@ function reportFixture(): VSleepSessionReport {
       },
     ],
     uptime: {
-      observed_window_ms: 0,
-      hmd: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 0, transitions: 0 },
-      steamvr: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 0, transitions: 0 },
-      vrchat: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 0, transitions: 0 },
+      observed_window_ms: 120_000,
+      hmd: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 120_000, transitions: 0 },
+      steamvr: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 120_000, transitions: 0 },
+      vrchat: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 120_000, transitions: 0 },
     },
   };
+}
+
+function setUptimeWindow(report: VSleepSessionReport, observedWindowMs: number | null): void {
+  report.uptime.observed_window_ms = observedWindowMs;
+  const unknownMs = observedWindowMs ?? 0;
+  report.uptime.hmd = { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: unknownMs, transitions: 0 };
+  report.uptime.steamvr = { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: unknownMs, transitions: 0 };
+  report.uptime.vrchat = { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: unknownMs, transitions: 0 };
 }
 
 describe('VSleep derived classification provenance', () => {
@@ -50,6 +58,61 @@ describe('VSleep derived classification provenance', () => {
     delete report.recording;
 
     expect(validateVSleepClassificationProvenance(report)).toBe(report);
+  });
+
+  it('rejects a current report observation from another session even without classifications', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.observations.push({
+      ...report.observations[0],
+      session_id: 'session-b',
+    });
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /observations\[1\]\.session_id: current backend report observations must match session_id/
+    );
+  });
+
+  it('requires non-empty sessionless current reports to be marked ambiguous_session', () => {
+    const report = reportFixture();
+    report.session_id = null;
+    report.classifications = [];
+    report.recording = {
+      status: 'missing_both',
+      start_timestamp_utc: null,
+      end_timestamp_utc: null,
+    };
+    setUptimeWindow(report, null);
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /recording\.status: sessionless report with mixed observations requires ambiguous_session/
+    );
+  });
+
+  it('requires sessionless current reports to keep backend uptime quarantined', () => {
+    const report = reportFixture();
+    report.session_id = null;
+    report.classifications = [];
+    report.recording = {
+      status: 'ambiguous_session',
+      start_timestamp_utc: null,
+      end_timestamp_utc: null,
+    };
+    setUptimeWindow(report, 0);
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /uptime\.observed_window_ms: sessionless reports require a null observed window/
+    );
+  });
+
+  it('requires a complete recording uptime window to equal its authoritative bounds', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    setUptimeWindow(report, 60_000);
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /complete recording requires observed window to equal authoritative bounds \(120000\)/
+    );
   });
 
   it('rejects a derived classification before a trustworthy recording start', () => {
@@ -107,7 +170,7 @@ describe('VSleep derived classification provenance', () => {
     report.observations = [];
 
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
-      /missing authoritative observed trigger open_vr\/hmd_disconnected at classification timestamp/
+      /session_id: non-null session_id requires at least one observation/
     );
   });
 
@@ -134,7 +197,7 @@ describe('VSleep derived classification provenance', () => {
     report.observations[0].session_id = 'session-b';
 
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
-      /missing authoritative observed trigger open_vr\/hmd_disconnected at classification timestamp/
+      /observations\[0\]\.session_id: current backend report observations must match session_id/
     );
   });
 
