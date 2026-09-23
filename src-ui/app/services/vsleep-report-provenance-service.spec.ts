@@ -113,6 +113,42 @@ function payloadWithCompleteWindowMismatch(): Record<string, unknown> {
   };
 }
 
+function payloadWithMissingStartWindowMismatch(): Record<string, unknown> {
+  return {
+    session_id: 'session-a',
+    recording: {
+      status: 'missing_start',
+      start_timestamp_utc: null,
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    },
+    observations: [
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:41:00.000Z',
+        session_id: 'session-a',
+        source: 'open_vr',
+        kind: 'hmd_disconnected',
+        confidence: 'observed',
+      },
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:42:00.000Z',
+        session_id: 'session-a',
+        source: 'vsleep',
+        kind: 'session_ended',
+        confidence: 'observed',
+      },
+    ],
+    classifications: [],
+    uptime: {
+      observed_window_ms: 120_000,
+      hmd: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 120_000, transitions: 0 },
+      steamvr: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 120_000, transitions: 0 },
+      vrchat: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 120_000, transitions: 0 },
+    },
+  };
+}
+
 describe('VSleep report provenance at the Tauri boundary', () => {
   it('rejects a structurally valid classification whose raw trigger is not authoritative', async () => {
     mocks.invoke.mockReset();
@@ -148,6 +184,19 @@ describe('VSleep report provenance at the Tauri boundary', () => {
       name: 'VSleepReportIntegrityError',
       path: 'uptime.observed_window_ms',
       detail: 'complete recording requires observed window to equal authoritative bounds (120000)',
+    } satisfies Partial<VSleepReportIntegrityError>);
+  });
+
+  it('rejects a partial report whose uptime window ignores the backend fallback endpoint', async () => {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValue(payloadWithMissingStartWindowMismatch());
+    const service = new VSleepReportService();
+
+    await expect(service.readSessionReport('session-a.jsonl')).rejects.toMatchObject({
+      name: 'VSleepReportIntegrityError',
+      path: 'uptime.observed_window_ms',
+      detail:
+        'missing_start recording requires observed window to equal the backend authoritative-evidence window (60000)',
     } satisfies Partial<VSleepReportIntegrityError>);
   });
 });
