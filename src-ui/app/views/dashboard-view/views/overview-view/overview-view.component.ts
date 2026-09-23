@@ -8,6 +8,7 @@ import { SleepPreparationService } from '../../../../services/sleep-preparation.
 import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
 import { VSleepReportIntegrityError } from '../../../../services/vsleep-report-schema';
+import { toVSleepDisplayDate } from '../../../../services/vsleep-report-timestamp';
 import type {
   VSleepIncidentWindow,
   VSleepSessionBoundarySummary,
@@ -100,8 +101,8 @@ export class OverviewViewComponent implements OnInit {
   }
 
   protected formatVSleepTime(timestampUtc: string): string {
-    const timestamp = new Date(timestampUtc);
-    if (Number.isNaN(timestamp.getTime())) return timestampUtc;
+    const timestamp = toVSleepDisplayDate(timestampUtc);
+    if (!timestamp) return timestampUtc;
     return new Intl.DateTimeFormat(undefined, {
       hour: '2-digit',
       minute: '2-digit',
@@ -111,8 +112,8 @@ export class OverviewViewComponent implements OnInit {
 
   protected formatVSleepSessionDate(timestampUtc: string | null): string {
     if (!timestampUtc) return '—';
-    const timestamp = new Date(timestampUtc);
-    if (Number.isNaN(timestamp.getTime())) return '—';
+    const timestamp = toVSleepDisplayDate(timestampUtc);
+    if (!timestamp) return '—';
     return new Intl.DateTimeFormat(undefined, {
       month: 'short',
       day: 'numeric',
