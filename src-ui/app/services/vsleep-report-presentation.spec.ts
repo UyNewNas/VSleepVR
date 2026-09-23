@@ -4,6 +4,8 @@ import {
   vsleepClassificationIsInference,
   vsleepObservationEvidenceLabel,
   vsleepObservationMarker,
+  vsleepRecordingIntegrityEvidenceLabel,
+  vsleepUptimeEvidenceLabel,
 } from './vsleep-report-presentation';
 import type { VSleepSessionEvent } from './vsleep-report.service';
 
@@ -74,5 +76,59 @@ describe('VSleep report presentation trust labels', () => {
     expect(vsleepClassificationIsInference('inferred_high')).toBe(true);
     expect(vsleepClassificationIsInference('inferred_medium')).toBe(true);
     expect(vsleepClassificationIsInference('inferred_low')).toBe(true);
+  });
+
+  it('labels recording integrity as a backend-derived boundary interpretation', () => {
+    expect(vsleepRecordingIntegrityEvidenceLabel('complete')).toBe(
+      'derived · authoritative start/end'
+    );
+    expect(vsleepRecordingIntegrityEvidenceLabel('missing_start')).toBe(
+      'derived · authoritative end only'
+    );
+    expect(vsleepRecordingIntegrityEvidenceLabel('missing_end')).toBe(
+      'derived · authoritative start only'
+    );
+    expect(vsleepRecordingIntegrityEvidenceLabel('missing_both')).toBe(
+      'derived · no authoritative session boundaries'
+    );
+    expect(vsleepRecordingIntegrityEvidenceLabel('invalid_order')).toBe(
+      'derived · contradictory boundary pair'
+    );
+    expect(vsleepRecordingIntegrityEvidenceLabel('ambiguous_boundaries')).toBe(
+      'derived · duplicate boundary evidence'
+    );
+    expect(vsleepRecordingIntegrityEvidenceLabel('ambiguous_session')).toBe(
+      'quarantined · mixed session evidence'
+    );
+  });
+
+  it('describes uptime as derived accounting over the trustworthy evidence window', () => {
+    expect(vsleepUptimeEvidenceLabel('complete', 60_000)).toBe(
+      'derived accounting · bounded by session start/end'
+    );
+    expect(vsleepUptimeEvidenceLabel('missing_start', 60_000)).toBe(
+      'derived accounting · partial evidence window'
+    );
+    expect(vsleepUptimeEvidenceLabel('missing_end', 60_000)).toBe(
+      'derived accounting · partial evidence window'
+    );
+    expect(vsleepUptimeEvidenceLabel('ambiguous_boundaries', 60_000)).toBe(
+      'derived accounting · partial evidence window'
+    );
+    expect(vsleepUptimeEvidenceLabel('missing_both', 60_000)).toBe(
+      'derived accounting · authoritative evidence span'
+    );
+    expect(vsleepUptimeEvidenceLabel('invalid_order', 60_000)).toBe(
+      'derived accounting · authoritative evidence span'
+    );
+  });
+
+  it('does not present a null uptime window as a measured duration', () => {
+    expect(vsleepUptimeEvidenceLabel('missing_both', null)).toBe(
+      'derived accounting · no trustworthy timed window'
+    );
+    expect(vsleepUptimeEvidenceLabel('ambiguous_session', null)).toBe(
+      'derived accounting · no trustworthy timed window'
+    );
   });
 });
