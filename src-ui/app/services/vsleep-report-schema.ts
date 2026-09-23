@@ -45,6 +45,12 @@ function requireNonNegativeNumber(value: unknown, path: string): asserts value i
   }
 }
 
+function requireNonNegativeInteger(value: unknown, path: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    fail(path, 'expected non-negative safe integer');
+  }
+}
+
 function requireTimestampOrNull(value: unknown, path: string): asserts value is string | null {
   requireNullableString(value, path);
   if (typeof value === 'string' && !Number.isFinite(Date.parse(value))) {
@@ -76,23 +82,63 @@ function validateClassification(value: unknown, index: number): void {
   );
 }
 
-function validateRuntimeUptime(value: unknown, path: string): void {
+interface ValidatedRuntimeUptime {
+  observedUpMs: number;
+  observedDownMs: number;
+  unknownMs: number;
+  transitions: number;
+}
+
+function validateRuntimeUptime(value: unknown, path: string): ValidatedRuntimeUptime {
   if (!isRecord(value)) fail(path, 'expected object');
-  requireNonNegativeNumber(value['observed_up_ms'], `${path}.observed_up_ms`);
-  requireNonNegativeNumber(value['observed_down_ms'], `${path}.observed_down_ms`);
-  requireNonNegativeNumber(value['unknown_ms'], `${path}.unknown_ms`);
-  requireNonNegativeNumber(value['transitions'], `${path}.transitions`);
+  requireNonNegativeInteger(value['observed_up_ms'], `${path}.observed_up_ms`);
+  requireNonNegativeInteger(value['observed_down_ms'], `${path}.observed_down_ms`);
+  requireNonNegativeInteger(value['unknown_ms'], `${path}.unknown_ms`);
+  requireNonNegativeInteger(value['transitions'], `${path}.transitions`);
+  return {
+    observedUpMs: value['observed_up_ms'],
+    observedDownMs: value['observed_down_ms'],
+    unknownMs: value['unknown_ms'],
+    transitions: value['transitions'],
+  };
+}
+
+function validateRuntimeUptimeAccounting(
+  runtime: ValidatedRuntimeUptime,
+  path: string,
+  observedWindowMs: number | null
+): void {
+  if (observedWindowMs === null) {
+    if (
+      runtime.observedUpMs !== 0 ||
+      runtime.observedDownMs !== 0 ||
+      runtime.unknownMs !== 0 ||
+      runtime.transitions !== 0
+    ) {
+      fail(path, 'expected zero runtime summary when observed_window_ms is null');
+    }
+    return;
+  }
+
+  const accountedMs = runtime.observedUpMs + runtime.observedDownMs + runtime.unknownMs;
+  if (!Number.isSafeInteger(accountedMs) || accountedMs !== observedWindowMs) {
+    fail(path, `runtime durations must sum to observed_window_ms (${observedWindowMs})`);
+  }
 }
 
 function validateUptime(value: unknown): void {
   if (!isRecord(value)) fail('uptime', 'expected object');
   const observedWindow = value['observed_window_ms'];
   if (observedWindow !== null) {
-    requireNonNegativeNumber(observedWindow, 'uptime.observed_window_ms');
+    requireNonNegativeInteger(observedWindow, 'uptime.observed_window_ms');
   }
-  validateRuntimeUptime(value['hmd'], 'uptime.hmd');
-  validateRuntimeUptime(value['steamvr'], 'uptime.steamvr');
-  validateRuntimeUptime(value['vrchat'], 'uptime.vrchat');
+
+  const hmd = validateRuntimeUptime(value['hmd'], 'uptime.hmd');
+  const steamvr = validateRuntimeUptime(value['steamvr'], 'uptime.steamvr');
+  const vrchat = validateRuntimeUptime(value['vrchat'], 'uptime.vrchat');
+  validateRuntimeUptimeAccounting(hmd, 'uptime.hmd', observedWindow as number | null);
+  validateRuntimeUptimeAccounting(steamvr, 'uptime.steamvr', observedWindow as number | null);
+  validateRuntimeUptimeAccounting(vrchat, 'uptime.vrchat', observedWindow as number | null);
 }
 
 function validateRecording(
