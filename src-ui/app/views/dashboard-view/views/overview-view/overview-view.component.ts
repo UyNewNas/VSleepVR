@@ -7,6 +7,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { SleepPreparationService } from '../../../../services/sleep-preparation.service';
 import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
+import { VSleepReportIntegrityError } from '../../../../services/vsleep-report-schema';
 import type {
   VSleepIncidentWindow,
   VSleepSessionBoundarySummary,
@@ -38,6 +39,7 @@ export class OverviewViewComponent implements OnInit {
   vsleepIncidents: VSleepIncidentWindow[] = [];
   vsleepReportLoading = true;
   vsleepReportFailed = false;
+  vsleepReportIntegrityFailed = false;
   private vsleepReportLoadGeneration = 0;
 
   constructor(
@@ -163,7 +165,7 @@ export class OverviewViewComponent implements OnInit {
       : (this.vsleepSessions[this.vsleepSelectedSessionIndex]?.file_name ?? null);
 
     this.vsleepReportLoading = true;
-    this.vsleepReportFailed = false;
+    this.clearVSleepReportFailure();
 
     try {
       const sessions = await this.vsleepReports.listSessions();
@@ -186,10 +188,10 @@ export class OverviewViewComponent implements OnInit {
       );
       if (generation !== this.vsleepReportLoadGeneration) return;
       this.applyVSleepReport(report);
-    } catch {
+    } catch (error) {
       if (generation !== this.vsleepReportLoadGeneration) return;
       this.applyVSleepReport(null);
-      this.vsleepReportFailed = true;
+      this.setVSleepReportFailure(error);
     } finally {
       if (generation === this.vsleepReportLoadGeneration) {
         this.vsleepReportLoading = false;
@@ -204,7 +206,7 @@ export class OverviewViewComponent implements OnInit {
     const generation = ++this.vsleepReportLoadGeneration;
     this.vsleepSelectedSessionIndex = index;
     this.vsleepReportLoading = true;
-    this.vsleepReportFailed = false;
+    this.clearVSleepReportFailure();
 
     try {
       const report = await this.vsleepReports.readSessionReport(
@@ -212,15 +214,25 @@ export class OverviewViewComponent implements OnInit {
       );
       if (generation !== this.vsleepReportLoadGeneration) return;
       this.applyVSleepReport(report);
-    } catch {
+    } catch (error) {
       if (generation !== this.vsleepReportLoadGeneration) return;
       this.applyVSleepReport(null);
-      this.vsleepReportFailed = true;
+      this.setVSleepReportFailure(error);
     } finally {
       if (generation === this.vsleepReportLoadGeneration) {
         this.vsleepReportLoading = false;
       }
     }
+  }
+
+  private clearVSleepReportFailure(): void {
+    this.vsleepReportFailed = false;
+    this.vsleepReportIntegrityFailed = false;
+  }
+
+  private setVSleepReportFailure(error: unknown): void {
+    this.vsleepReportIntegrityFailed = error instanceof VSleepReportIntegrityError;
+    this.vsleepReportFailed = !this.vsleepReportIntegrityFailed;
   }
 
   private applyVSleepReport(report: VSleepSessionReport | null): void {
