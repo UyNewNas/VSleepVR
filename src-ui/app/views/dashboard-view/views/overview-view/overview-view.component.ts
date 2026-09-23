@@ -9,6 +9,8 @@ import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
 import { VSleepReportIntegrityError } from '../../../../services/vsleep-report-schema';
 import {
+  vsleepClassificationEvidenceLabel,
+  vsleepClassificationIsInference,
   vsleepObservationEvidenceLabel,
   vsleepObservationMarker,
 } from '../../../../services/vsleep-report-presentation';
@@ -137,6 +139,18 @@ export class OverviewViewComponent implements OnInit {
     return vsleepObservationEvidenceLabel(entry.observation);
   }
 
+  protected vsleepClassificationTrustLabel(entry: VSleepTimelineEntry): string {
+    if (entry.entryType !== 'classification') return '';
+    return vsleepClassificationEvidenceLabel(entry.classification.confidence);
+  }
+
+  protected vsleepTimelineEntryIsInference(entry: VSleepTimelineEntry): boolean {
+    return (
+      entry.entryType === 'classification' &&
+      vsleepClassificationIsInference(entry.classification.confidence)
+    );
+  }
+
   protected vsleepTimelineMarker(entry: VSleepTimelineEntry): string {
     if (entry.entryType === 'classification') return '◇';
     return vsleepObservationMarker(entry.observation);
@@ -151,6 +165,10 @@ export class OverviewViewComponent implements OnInit {
       case 'vrchat_failure':
         return 'VRChat';
     }
+  }
+
+  protected vsleepIncidentTrustLabel(incident: VSleepIncidentWindow): string {
+    return vsleepClassificationEvidenceLabel(incident.confidence);
   }
 
   protected vsleepBoundaryLabel(boundary: VSleepSessionBoundarySummary): string {
