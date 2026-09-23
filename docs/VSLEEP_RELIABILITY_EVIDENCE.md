@@ -84,6 +84,8 @@ Examples:
 - `windows_power_transition`: `observed` with exactly one `windows_suspend` or `windows_resume` evidence item;
 - `unknown_insufficient_evidence`: `inferred_low` with exactly one HMD/SteamVR/VRChat failure-like trigger observation.
 
+The transport boundary also cross-checks each derived classification against the raw observations carried in the same report. Its first evidence item must have a same-session, same-timestamp, directly observed trigger from the authoritative producer. When backend-owned recording metadata exposes a trustworthy start and/or end edge, the classification timestamp must also lie inside every known edge. One-sided bounds retained by `missing_start`, `missing_end`, or `ambiguous_boundaries` are enforced independently. `invalid_order` remains deliberately unbounded because the backend itself refuses to guess a usable interval from contradictory edges. Legacy reports without `recording` metadata retain compatibility rather than inventing new bounds in the frontend.
+
 This strictness is intentional. Raw journal source/kind strings stay forward-compatible and visible for future forensic producers, but a future backend change to derived classification semantics must update the frontend contract in the same reviewed change instead of silently being trusted as an existing diagnosis. Validation failure remains read-only and never rewrites the journal or initiates recovery.
 
 ## Uptime accounting rule
