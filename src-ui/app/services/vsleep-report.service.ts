@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { invoke } from '@tauri-apps/api/core';
+import { validateVSleepClassificationProvenance } from './vsleep-report-provenance';
 import { parseVSleepSessionReport } from './vsleep-report-schema';
 
 export type VSleepEventSource =
@@ -144,7 +145,7 @@ export class VSleepReportService {
 
   async readSessionReport(fileName: string): Promise<VSleepSessionReport> {
     const payload = await invoke<unknown>('vsleep_read_session_report', { fileName });
-    return parseVSleepSessionReport(payload);
+    return validateVSleepClassificationProvenance(parseVSleepSessionReport(payload));
   }
 
   async readLatestSessionReport(): Promise<VSleepSessionReport | null> {
