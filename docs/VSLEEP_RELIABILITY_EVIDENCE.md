@@ -35,6 +35,8 @@ The real producer functions are covered from the write side by `producer_contrac
 
 Frontend consumers must prefer `SessionReport.recording` whenever it is present. `VSleepReportService` keeps raw-observation boundary derivation only as a compatibility fallback for reports generated before the backend summary existed. An `ambiguous_session` summary is fail-closed for derived frontend classifications and incident windows while raw observations remain visible.
 
+The Tauri payload boundary validates report structure before the UI trusts derived data. Validation failures are surfaced as a distinct `VSleepReportIntegrityError`, and the Overview renders a read-only integrity-failure state instead of treating the payload like an ordinary transport error. The persisted JSONL is left unchanged; no repair, rewrite, restart, reconnect, or other recovery action is attempted automatically.
+
 The status is conservative and source-qualified:
 
 - `complete`: one authoritative, parseable start and one authoritative, parseable end in chronological order;
