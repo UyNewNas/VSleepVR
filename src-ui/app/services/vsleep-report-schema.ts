@@ -2,6 +2,7 @@ import type {
   VSleepSessionRecordingSummary,
   VSleepSessionReport,
 } from './vsleep-report.service';
+import { parseVSleepRfc3339TimestampMs } from './vsleep-report-timestamp';
 
 const recordingStatuses = new Set([
   'complete',
@@ -90,13 +91,15 @@ function requireNonNegativeInteger(value: unknown, path: string): asserts value 
 
 function requireTimestamp(value: unknown, path: string): asserts value is string {
   requireString(value, path);
-  if (!Number.isFinite(Date.parse(value))) fail(path, 'expected parseable timestamp');
+  if (parseVSleepRfc3339TimestampMs(value) === null) {
+    fail(path, 'expected parseable timestamp in RFC3339 format');
+  }
 }
 
 function requireTimestampOrNull(value: unknown, path: string): asserts value is string | null {
   requireNullableString(value, path);
-  if (typeof value === 'string' && !Number.isFinite(Date.parse(value))) {
-    fail(path, 'expected parseable timestamp or null');
+  if (typeof value === 'string' && parseVSleepRfc3339TimestampMs(value) === null) {
+    fail(path, 'expected parseable timestamp in RFC3339 format or null');
   }
 }
 
@@ -293,8 +296,8 @@ function validateRecording(
   const status = value['status'];
   const start = value['start_timestamp_utc'];
   const end = value['end_timestamp_utc'];
-  const startMs = typeof start === 'string' ? Date.parse(start) : null;
-  const endMs = typeof end === 'string' ? Date.parse(end) : null;
+  const startMs = typeof start === 'string' ? parseVSleepRfc3339TimestampMs(start) : null;
+  const endMs = typeof end === 'string' ? parseVSleepRfc3339TimestampMs(end) : null;
 
   switch (status) {
     case 'complete':
