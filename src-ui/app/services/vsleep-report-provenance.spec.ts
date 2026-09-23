@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest';
+import { validateVSleepClassificationProvenance } from './vsleep-report-provenance';
+import { VSleepReportIntegrityError } from './vsleep-report-schema';
+import type { VSleepSessionReport } from './vsleep-report.service';
+
+function reportFixture(): VSleepSessionReport {
+  return {
+    session_id: 'session-a',
+    observations: [
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:41:00.000Z',
+        session_id: 'session-a',
+        source: 'open_vr',
+        kind: 'hmd_disconnected',
+        confidence: 'observed',
+      },
+    ],
+    classifications: [
+      {
+        timestamp_utc: '2026-09-21T02:41:00.000Z',
+        category: 'hmd_or_link_failure',
+        confidence: 'inferred_medium',
+        evidence: ['hmd_disconnected', 'steam_vr_started', 'vrchat_started'],
+        rationale: 'backend-owned reliability classification',
+      },
+    ],
+    uptime: {
+      observed_window_ms: 0,
+      hmd: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 0, transitions: 0 },
+      steamvr: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 0, transitions: 0 },
+      vrchat: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 0, transitions: 0 },
+    },
+  };
+}
+
+describe('VSleep derived classification provenance', () => {
+  it('accepts a classification backed by its authoritative observed trigger', () => {
+    const report = reportFixture();
+    expect(validateVSleepClassificationProvenance(report)).toBe(report);
+  });
+
+  it('rejects a classification whose trigger observation is missing', () => {
+    const report = reportFixture();
+    report.observations = [];
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /missing authoritative observed trigger open_vr\/hmd_disconnected at classification timestamp/
+    );
+  });
+
+  it('rejects a wrong-source observed row as classification provenance', () => {
+    const report = reportFixture();
+    report.observations[0].source = 'vrchat_log';
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /missing authoritative observed trigger open_vr\/hmd_disconnected at classification timestamp/
+    );
+  });
+
+  it('rejects inferred evidence as classification provenance', () => {
+    const report = reportFixture();
+    report.observations[0].confidence = 'inferred_low';
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /missing authoritative observed trigger open_vr\/hmd_disconnected at classification timestamp/
+    );
+  });
+
+  it('rejects an otherwise matching trigger from another session', () => {
+    const report = reportFixture();
+    report.observations[0].session_id = 'session-b';
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /missing authoritative observed trigger open_vr\/hmd_disconnected at classification timestamp/
+    );
+  });
+
+  it('rejects derived classifications when the report has no unambiguous session id', () => {
+    const report = reportFixture();
+    report.session_id = null;
+
+    try {
+      validateVSleepClassificationProvenance(report);
+      throw new Error('fixture should have failed provenance validation');
+    } catch (error) {
+      expect(error).toBeInstanceOf(VSleepReportIntegrityError);
+      expect(error).toMatchObject({
+        path: 'classifications',
+        detail: 'derived classifications require an unambiguous session_id',
+      });
+    }
+  });
+});
