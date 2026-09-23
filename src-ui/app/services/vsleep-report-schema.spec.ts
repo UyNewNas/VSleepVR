@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseVSleepSessionReport } from './vsleep-report-schema';
+import {
+  parseVSleepSessionReport,
+  VSleepReportIntegrityError,
+} from './vsleep-report-schema';
 
 interface MutableReportPayload {
   session_id: string | null;
@@ -83,6 +86,27 @@ describe('VSleep session report runtime schema', () => {
     expect(() => parseVSleepSessionReport(payload)).toThrow(
       /complete requires ordered start and end timestamps/
     );
+  });
+
+  it('exposes schema failures as a distinct integrity error for read-only UI handling', () => {
+    const payload = validPayload();
+    payload.recording = {
+      status: 'complete',
+      start_timestamp_utc: '2026-09-20T23:48:00.000Z',
+      end_timestamp_utc: null,
+    };
+
+    try {
+      parseVSleepSessionReport(payload);
+      throw new Error('fixture should have failed validation');
+    } catch (error) {
+      expect(error).toBeInstanceOf(VSleepReportIntegrityError);
+      expect(error).toMatchObject({
+        name: 'VSleepReportIntegrityError',
+        path: 'recording',
+        detail: 'complete requires ordered start and end timestamps',
+      });
+    }
   });
 
   it('rejects a mixed-session status that still claims one session id', () => {
