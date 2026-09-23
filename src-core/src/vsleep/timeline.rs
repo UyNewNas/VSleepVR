@@ -53,9 +53,9 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
     // Classification is stateful, so append order must never be allowed to make a
     // later observation influence an earlier failure inference. Keep raw evidence
     // untouched for the report, but analyze only directly observed events with
-    // parseable timestamps in chronological order. A complete observed recording
-    // also bounds the analysis window so pre/post-session evidence cannot mutate
-    // in-session classifier state.
+    // parseable timestamps in chronological order. Any unique authoritative
+    // recording edge bounds analysis on that side, so a truncated recording does
+    // not let pre-session or post-session evidence mutate in-session state.
     //
     // Events sharing the same millisecond are treated as a simultaneous batch:
     // failure-like observations in such a batch are not causally ordered against
@@ -260,7 +260,7 @@ pub(crate) fn is_authoritative_reliability_observation(event: &SessionEvent) -> 
 }
 
 fn chronological_valid_events(events: &[SessionEvent]) -> Vec<(i64, &SessionEvent)> {
-    let complete_window = complete_observed_session_window(events);
+    let (start_bound, end_bound) = observed_session_bounds(events);
     let mut timed_events: Vec<(i64, &SessionEvent)> = events
         .iter()
         .filter(|event| is_authoritative_reliability_observation(event))
@@ -270,49 +270,46 @@ fn chronological_valid_events(events: &[SessionEvent]) -> Vec<(i64, &SessionEven
                 .map(|timestamp| (timestamp.timestamp_millis(), event))
         })
         .filter(|(timestamp, _)| {
-            complete_window
-                .map(|(start, end)| *timestamp >= start && *timestamp <= end)
-                .unwrap_or(true)
+            start_bound.map(|start| *timestamp >= start).unwrap_or(true)
+                && end_bound.map(|end| *timestamp <= end).unwrap_or(true)
         })
         .collect();
     timed_events.sort_by_key(|(timestamp, _)| *timestamp);
     timed_events
 }
 
-fn complete_observed_session_window(events: &[SessionEvent]) -> Option<(i64, i64)> {
-    let mut starts = events
+fn observed_session_bounds(events: &[SessionEvent]) -> (Option<i64>, Option<i64>) {
+    let start = unique_authoritative_session_boundary(events, EventKind::SessionStarted);
+    let end = unique_authoritative_session_boundary(events, EventKind::SessionEnded);
+
+    // Two individually authoritative edges that disagree on ordering are not a
+    // usable interval. Preserve the current evidence-visible behavior instead of
+    // guessing which edge is wrong. If only one edge is unique, however, that edge
+    // is still a trustworthy one-sided bound for a partial/ambiguous recording.
+    if matches!((start, end), (Some(start), Some(end)) if end < start) {
+        (None, None)
+    } else {
+        (start, end)
+    }
+}
+
+fn unique_authoritative_session_boundary(
+    events: &[SessionEvent],
+    kind: EventKind,
+) -> Option<i64> {
+    let mut boundaries = events
         .iter()
-        .filter(|event| {
-            event.kind == EventKind::SessionStarted
-                && is_authoritative_reliability_observation(event)
-        })
+        .filter(|event| event.kind == kind && is_authoritative_reliability_observation(event))
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                 .ok()
                 .map(|timestamp| timestamp.timestamp_millis())
         });
-    let start = starts.next()?;
-    if starts.next().is_some() {
+    let boundary = boundaries.next()?;
+    if boundaries.next().is_some() {
         return None;
     }
-
-    let mut ends = events
-        .iter()
-        .filter(|event| {
-            event.kind == EventKind::SessionEnded
-                && is_authoritative_reliability_observation(event)
-        })
-        .filter_map(|event| {
-            chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
-                .ok()
-                .map(|timestamp| timestamp.timestamp_millis())
-        });
-    let end = ends.next()?;
-    if ends.next().is_some() {
-        return None;
-    }
-
-    (start <= end).then_some((start, end))
+    Some(boundary)
 }
 
 fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
@@ -333,8 +330,9 @@ fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
     timed_events.sort_by_key(|(timestamp, _)| *timestamp);
     let fallback_start = timed_events.first().expect("non-empty timeline").0;
     let fallback_end = timed_events.last().expect("non-empty timeline").0;
-    let (window_start, window_end) =
-        complete_observed_session_window(events).unwrap_or((fallback_start, fallback_end));
+    let (start_bound, end_bound) = observed_session_bounds(events);
+    let window_start = start_bound.unwrap_or(fallback_start);
+    let window_end = end_bound.unwrap_or(fallback_end);
     let observed_window_ms = millis_between(window_start, window_end);
     let bounded_events: Vec<(i64, EventKind)> = timed_events
         .into_iter()
@@ -726,6 +724,44 @@ mod tests {
     }
 
     #[test]
+    fn classification_uses_known_start_when_session_end_is_missing() {
+        let events = vec![
+            event_at(EventKind::SteamVrStarted, "2026-09-20T23:50:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-20T23:55:00Z"),
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T00:10:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.classifications.len(), 1);
+        assert_eq!(
+            report.classifications[0].category,
+            FailureClass::UnknownInsufficientEvidence
+        );
+        assert_eq!(
+            report.classifications[0].timestamp_utc,
+            "2026-09-21T00:10:00Z"
+        );
+    }
+
+    #[test]
+    fn classification_uses_known_end_when_session_start_is_missing() {
+        let events = vec![
+            event_at(EventKind::SteamVrStarted, "2026-09-21T00:20:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:30:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+            event_at(EventKind::HmdDisconnected, "2026-09-21T01:10:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert!(report.classifications.is_empty());
+    }
+
+    #[test]
     fn inferred_observations_cannot_drive_classification_or_observed_uptime() {
         const MINUTE_MS: u64 = 60_000;
 
@@ -921,6 +957,58 @@ mod tests {
                 observed_up_ms: 30 * MINUTE_MS,
                 observed_down_ms: 20 * MINUTE_MS,
                 unknown_ms: 10 * MINUTE_MS,
+                transitions: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn uptime_summary_uses_known_start_when_session_end_is_missing() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let events = vec![
+            event_at(EventKind::VrchatStarted, "2026-09-20T23:50:00Z"),
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::VrchatStopped, "2026-09-21T00:40:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.uptime.observed_window_ms, Some(40 * MINUTE_MS));
+        assert_eq!(
+            report.uptime.vrchat,
+            RuntimeUptimeSummary {
+                observed_up_ms: 30 * MINUTE_MS,
+                observed_down_ms: 0,
+                unknown_ms: 10 * MINUTE_MS,
+                transitions: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn uptime_summary_uses_known_end_when_session_start_is_missing() {
+        const MINUTE_MS: u64 = 60_000;
+
+        let events = vec![
+            event_at(EventKind::VrchatStarted, "2026-09-21T00:10:00Z"),
+            event_at(EventKind::VrchatStopped, "2026-09-21T00:40:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+            event_at(EventKind::VrchatStarted, "2026-09-21T01:10:00Z"),
+        ];
+
+        let report = build_session_report(&events);
+
+        assert_eq!(report.observations, events);
+        assert_eq!(report.uptime.observed_window_ms, Some(50 * MINUTE_MS));
+        assert_eq!(
+            report.uptime.vrchat,
+            RuntimeUptimeSummary {
+                observed_up_ms: 30 * MINUTE_MS,
+                observed_down_ms: 20 * MINUTE_MS,
+                unknown_ms: 0,
                 transitions: 1,
             }
         );
