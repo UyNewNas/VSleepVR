@@ -80,7 +80,11 @@
           >
             ←
           </button>
-          <span class="vsleep-report-session">
+          <span
+            class="vsleep-report-session"
+            title="Filesystem modification time; not session-time evidence"
+          >
+            file metadata ·
             {{ formatVSleepSessionDate(vsleepSessions[vsleepSelectedSessionIndex].modified_utc) }}
             · {{ vsleepSelectedSessionIndex + 1 }}/{{ vsleepSessions.length }}
           </span>
