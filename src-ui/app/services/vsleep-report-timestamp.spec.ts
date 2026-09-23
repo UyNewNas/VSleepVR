@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { validateVSleepClassificationProvenance } from './vsleep-report-provenance';
 import { parseVSleepSessionReport } from './vsleep-report-schema';
-import { parseVSleepRfc3339TimestampMs } from './vsleep-report-timestamp';
+import {
+  parseVSleepRfc3339TimestampMs,
+  toVSleepDisplayDate,
+} from './vsleep-report-timestamp';
 import type { VSleepSessionReport } from './vsleep-report.service';
 
 function zeroRuntime(unknownMs: number) {
@@ -39,6 +42,17 @@ describe('VSleep RFC3339 timestamp boundary', () => {
     expect(parseVSleepRfc3339TimestampMs('2026-02-31T14:00:00Z')).toBeNull();
     expect(parseVSleepRfc3339TimestampMs('2026-09-23T24:00:00Z')).toBeNull();
     expect(parseVSleepRfc3339TimestampMs('2026-09-23T14:00:00+0000')).toBeNull();
+  });
+
+  it('does not normalize forensic-only timestamp strings into trusted display dates', () => {
+    const canonical = '2026-09-23T14:00:00.123Z';
+    const displayDate = toVSleepDisplayDate(canonical);
+    expect(displayDate?.getTime()).toBe(parseVSleepRfc3339TimestampMs(canonical));
+
+    const colonlessOffset = '2026-09-23T14:00:00+0000';
+    expect(Date.parse(colonlessOffset)).not.toBeNaN();
+    expect(toVSleepDisplayDate(colonlessOffset)).toBeNull();
+    expect(toVSleepDisplayDate('2026-09-23T14:00:00')).toBeNull();
   });
 
   it('fails closed when backend-owned classification time is only Date.parse-compatible', () => {
