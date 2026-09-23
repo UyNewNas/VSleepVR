@@ -51,7 +51,8 @@ export type VSleepSessionBoundaryStatus =
   | 'missing_end'
   | 'missing_both'
   | 'invalid_order'
-  | 'ambiguous_boundaries';
+  | 'ambiguous_boundaries'
+  | 'ambiguous_session';
 
 export interface VSleepSessionFileInfo {
   file_name: string;
@@ -91,8 +92,15 @@ export interface VSleepSessionUptimeSummary {
   vrchat: VSleepRuntimeUptimeSummary;
 }
 
+export interface VSleepSessionRecordingSummary {
+  status: VSleepSessionBoundaryStatus;
+  start_timestamp_utc: string | null;
+  end_timestamp_utc: string | null;
+}
+
 export interface VSleepSessionReport {
   session_id: string | null;
+  recording?: VSleepSessionRecordingSummary;
   observations: VSleepSessionEvent[];
   classifications: VSleepFailureClassification[];
   uptime: VSleepSessionUptimeSummary;
@@ -144,6 +152,18 @@ export class VSleepReportService {
   }
 
   summarizeSessionBoundaries(report: VSleepSessionReport): VSleepSessionBoundarySummary {
+    // New reports carry a backend-owned recording summary. Treat it as the
+    // canonical interpretation of authoritative session boundaries so the UI
+    // cannot drift from classifier/uptime semantics. Keep the legacy fallback
+    // below for older persisted/generated reports that predate this field.
+    if (report.recording) {
+      return {
+        status: report.recording.status,
+        startTimestampUtc: report.recording.start_timestamp_utc,
+        endTimestampUtc: report.recording.end_timestamp_utc,
+      };
+    }
+
     if (!report.session_id) {
       return {
         status: 'missing_both',
@@ -360,6 +380,11 @@ export class VSleepReportService {
   ): boolean {
     const timestampMs = this.parseTimestampMs(timestampUtc);
     if (timestampMs === null) return false;
+
+    // Mixed-session reports are explicitly quarantined by the backend. Keep raw
+    // observations visible, but never surface derived classification/incident
+    // data if a malformed or stale frontend payload contains any.
+    if (boundary.status === 'ambiguous_session') return false;
 
     // A partial recording still contains trustworthy one-sided bounds. Use any
     // unique authoritative boundary that is available instead of dropping all
