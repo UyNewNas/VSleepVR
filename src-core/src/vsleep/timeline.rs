@@ -20,6 +20,35 @@ pub struct FailureClassification {
     pub rationale: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRecordingStatus {
+    Complete,
+    MissingStart,
+    MissingEnd,
+    MissingBoth,
+    InvalidOrder,
+    AmbiguousBoundaries,
+    AmbiguousSession,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRecordingSummary {
+    pub status: SessionRecordingStatus,
+    pub start_timestamp_utc: Option<String>,
+    pub end_timestamp_utc: Option<String>,
+}
+
+impl Default for SessionRecordingSummary {
+    fn default() -> Self {
+        Self {
+            status: SessionRecordingStatus::MissingBoth,
+            start_timestamp_utc: None,
+            end_timestamp_utc: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RuntimeUptimeSummary {
     pub observed_up_ms: u64,
@@ -39,6 +68,7 @@ pub struct SessionUptimeSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionReport {
     pub session_id: Option<String>,
+    pub recording: SessionRecordingSummary,
     pub observations: Vec<SessionEvent>,
     pub classifications: Vec<FailureClassification>,
     pub uptime: SessionUptimeSummary,
@@ -49,6 +79,17 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
     // to one unambiguous session. Preserve mixed-session evidence verbatim, but do
     // not choose a session on the caller's behalf or correlate state across them.
     let session_id = unambiguous_session_id(events);
+    let recording = if session_id.is_some() {
+        summarize_session_recording(events)
+    } else if events.is_empty() {
+        SessionRecordingSummary::default()
+    } else {
+        SessionRecordingSummary {
+            status: SessionRecordingStatus::AmbiguousSession,
+            start_timestamp_utc: None,
+            end_timestamp_utc: None,
+        }
+    };
 
     // Classification is stateful, so append order must never be allowed to make a
     // later observation influence an earlier failure inference. Keep raw evidence
@@ -188,6 +229,7 @@ pub fn build_session_report(events: &[SessionEvent]) -> SessionReport {
 
     SessionReport {
         session_id: session_id.map(str::to_string),
+        recording,
         observations: events.to_vec(),
         classifications,
         uptime: session_id
@@ -278,38 +320,113 @@ fn chronological_valid_events(events: &[SessionEvent]) -> Vec<(i64, &SessionEven
     timed_events
 }
 
-fn observed_session_bounds(events: &[SessionEvent]) -> (Option<i64>, Option<i64>) {
-    let start = unique_authoritative_session_boundary(events, EventKind::SessionStarted);
-    let end = unique_authoritative_session_boundary(events, EventKind::SessionEnded);
-
-    // Two individually authoritative edges that disagree on ordering are not a
-    // usable interval. Preserve the current evidence-visible behavior instead of
-    // guessing which edge is wrong. If only one edge is unique, however, that edge
-    // is still a trustworthy one-sided bound for a partial/ambiguous recording.
-    if matches!((start, end), (Some(start), Some(end)) if end < start) {
-        (None, None)
-    } else {
-        (start, end)
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundaryCandidate<'a> {
+    Missing,
+    Unique {
+        timestamp_utc: &'a str,
+        timestamp_ms: i64,
+    },
+    Ambiguous,
 }
 
-fn unique_authoritative_session_boundary(
+fn authoritative_session_boundary(
     events: &[SessionEvent],
     kind: EventKind,
-) -> Option<i64> {
+) -> BoundaryCandidate<'_> {
     let mut boundaries = events
         .iter()
         .filter(|event| event.kind == kind && is_authoritative_reliability_observation(event))
         .filter_map(|event| {
             chrono::DateTime::parse_from_rfc3339(&event.timestamp_utc)
                 .ok()
-                .map(|timestamp| timestamp.timestamp_millis())
+                .map(|timestamp| (event.timestamp_utc.as_str(), timestamp.timestamp_millis()))
         });
-    let boundary = boundaries.next()?;
+
+    let Some((timestamp_utc, timestamp_ms)) = boundaries.next() else {
+        return BoundaryCandidate::Missing;
+    };
     if boundaries.next().is_some() {
-        return None;
+        return BoundaryCandidate::Ambiguous;
     }
-    Some(boundary)
+
+    BoundaryCandidate::Unique {
+        timestamp_utc,
+        timestamp_ms,
+    }
+}
+
+pub(crate) fn summarize_session_recording(events: &[SessionEvent]) -> SessionRecordingSummary {
+    let start = authoritative_session_boundary(events, EventKind::SessionStarted);
+    let end = authoritative_session_boundary(events, EventKind::SessionEnded);
+
+    let start_timestamp_utc = match start {
+        BoundaryCandidate::Unique { timestamp_utc, .. } => Some(timestamp_utc.to_string()),
+        BoundaryCandidate::Missing | BoundaryCandidate::Ambiguous => None,
+    };
+    let end_timestamp_utc = match end {
+        BoundaryCandidate::Unique { timestamp_utc, .. } => Some(timestamp_utc.to_string()),
+        BoundaryCandidate::Missing | BoundaryCandidate::Ambiguous => None,
+    };
+
+    let status = match (start, end) {
+        (BoundaryCandidate::Ambiguous, _) | (_, BoundaryCandidate::Ambiguous) => {
+            SessionRecordingStatus::AmbiguousBoundaries
+        }
+        (BoundaryCandidate::Missing, BoundaryCandidate::Missing) => {
+            SessionRecordingStatus::MissingBoth
+        }
+        (BoundaryCandidate::Missing, BoundaryCandidate::Unique { .. }) => {
+            SessionRecordingStatus::MissingStart
+        }
+        (BoundaryCandidate::Unique { .. }, BoundaryCandidate::Missing) => {
+            SessionRecordingStatus::MissingEnd
+        }
+        (
+            BoundaryCandidate::Unique {
+                timestamp_ms: start_ms,
+                ..
+            },
+            BoundaryCandidate::Unique {
+                timestamp_ms: end_ms,
+                ..
+            },
+        ) if end_ms < start_ms => SessionRecordingStatus::InvalidOrder,
+        (BoundaryCandidate::Unique { .. }, BoundaryCandidate::Unique { .. }) => {
+            SessionRecordingStatus::Complete
+        }
+    };
+
+    SessionRecordingSummary {
+        status,
+        start_timestamp_utc,
+        end_timestamp_utc,
+    }
+}
+
+fn observed_session_bounds(events: &[SessionEvent]) -> (Option<i64>, Option<i64>) {
+    let recording = summarize_session_recording(events);
+
+    // Two individually authoritative edges that disagree on ordering are not a
+    // usable interval. Preserve the current evidence-visible behavior instead of
+    // guessing which edge is wrong. If only one edge is unique, however, that edge
+    // is still a trustworthy one-sided bound for a partial/ambiguous recording.
+    if recording.status == SessionRecordingStatus::InvalidOrder {
+        return (None, None);
+    }
+
+    let parse_bound = |timestamp_utc: Option<&str>| {
+        timestamp_utc.and_then(|timestamp_utc| {
+            chrono::DateTime::parse_from_rfc3339(timestamp_utc)
+                .ok()
+                .map(|timestamp| timestamp.timestamp_millis())
+        })
+    };
+
+    (
+        parse_bound(recording.start_timestamp_utc.as_deref()),
+        parse_bound(recording.end_timestamp_utc.as_deref()),
+    )
 }
 
 fn build_uptime_summary(events: &[SessionEvent]) -> SessionUptimeSummary {
@@ -606,9 +723,95 @@ mod tests {
         let report = build_session_report(&events);
 
         assert_eq!(report.session_id, None);
+        assert_eq!(report.recording.status, SessionRecordingStatus::AmbiguousSession);
         assert_eq!(report.observations, events);
         assert!(report.classifications.is_empty());
         assert_eq!(report.uptime, SessionUptimeSummary::default());
+    }
+
+    #[test]
+    fn recording_summary_is_first_class_and_source_qualified() {
+        let complete = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ]);
+        assert_eq!(
+            complete.recording,
+            SessionRecordingSummary {
+                status: SessionRecordingStatus::Complete,
+                start_timestamp_utc: Some("2026-09-21T00:00:00Z".to_string()),
+                end_timestamp_utc: Some("2026-09-21T01:00:00Z".to_string()),
+            }
+        );
+
+        let missing_end = build_session_report(&[event_at(
+            EventKind::SessionStarted,
+            "2026-09-21T00:00:00Z",
+        )]);
+        assert_eq!(missing_end.recording.status, SessionRecordingStatus::MissingEnd);
+        assert_eq!(
+            missing_end.recording.start_timestamp_utc.as_deref(),
+            Some("2026-09-21T00:00:00Z")
+        );
+        assert_eq!(missing_end.recording.end_timestamp_utc, None);
+
+        let missing_start = build_session_report(&[event_at(
+            EventKind::SessionEnded,
+            "2026-09-21T01:00:00Z",
+        )]);
+        assert_eq!(
+            missing_start.recording.status,
+            SessionRecordingStatus::MissingStart
+        );
+        assert_eq!(missing_start.recording.start_timestamp_utc, None);
+        assert_eq!(
+            missing_start.recording.end_timestamp_utc.as_deref(),
+            Some("2026-09-21T01:00:00Z")
+        );
+
+        let missing_both = build_session_report(&[event_at(
+            EventKind::HmdConnected,
+            "2026-09-21T00:30:00Z",
+        )]);
+        assert_eq!(
+            missing_both.recording.status,
+            SessionRecordingStatus::MissingBoth
+        );
+
+        let invalid_order = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T01:00:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T00:00:00Z"),
+        ]);
+        assert_eq!(
+            invalid_order.recording.status,
+            SessionRecordingStatus::InvalidOrder
+        );
+
+        let ambiguous = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            event_at(EventKind::SessionStarted, "2026-09-21T00:05:00Z"),
+            event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z"),
+        ]);
+        assert_eq!(
+            ambiguous.recording.status,
+            SessionRecordingStatus::AmbiguousBoundaries
+        );
+        assert_eq!(ambiguous.recording.start_timestamp_utc, None);
+        assert_eq!(
+            ambiguous.recording.end_timestamp_utc.as_deref(),
+            Some("2026-09-21T01:00:00Z")
+        );
+
+        let mut forged_end = event_at(EventKind::SessionEnded, "2026-09-21T01:00:00Z");
+        forged_end.source = EventSource::OpenVr;
+        let source_qualified = build_session_report(&[
+            event_at(EventKind::SessionStarted, "2026-09-21T00:00:00Z"),
+            forged_end,
+        ]);
+        assert_eq!(
+            source_qualified.recording.status,
+            SessionRecordingStatus::MissingEnd
+        );
     }
 
     #[test]
