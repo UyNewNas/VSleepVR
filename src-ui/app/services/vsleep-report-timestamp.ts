@@ -1,5 +1,5 @@
 const rfc3339TimestampPattern =
-  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
 
 function isLeapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
@@ -20,17 +20,17 @@ function daysInMonth(year: number, month: number): number {
 }
 
 /**
- * Parse the RFC3339 shape accepted by the VSleep backend timeline boundary.
+ * Parse the RFC3339 forms accepted by chrono 0.4.45's
+ * `DateTime::parse_from_rfc3339`, then expose the same millisecond precision
+ * used by the backend timeline.
  *
- * JavaScript Date.parse accepts implementation-defined conveniences such as a
- * space instead of `T`, a missing timezone, or calendar dates it normalizes
- * into the following month. Chrono's `DateTime::parse_from_rfc3339` does not
- * treat those strings as usable evidence. Keep the frontend conservative so a
- * timestamp cannot become authoritative only after crossing the Tauri boundary.
- *
- * The current journal producer emits millisecond UTC (`...SS.sssZ`). This parser
- * also accepts standard RFC3339 numeric offsets and longer fractional seconds;
- * fractions are truncated to milliseconds to mirror backend `timestamp_millis()`.
+ * Chrono accepts `T`, `t`, or a single space between date/time, upper/lowercase
+ * `Z`, numeric offsets from -23:59 through +23:59, leap-second `:60`, and any
+ * number of fractional digits (discarding precision past nanoseconds). JavaScript
+ * `Date.parse` also accepts non-RFC3339 conveniences that Chrono rejects, such as
+ * a missing timezone, `24:00:00`, invalid calendar dates that are normalized into
+ * the next month, or colonless numeric offsets. Keep those forms forensic-only so
+ * evidence cannot become authoritative merely after crossing the Tauri boundary.
  */
 export function parseVSleepRfc3339TimestampMs(value: string): number | null {
   const match = rfc3339TimestampPattern.exec(value);
@@ -54,17 +54,19 @@ export function parseVSleepRfc3339TimestampMs(value: string): number | null {
     day > daysInMonth(year, month) ||
     hour > 23 ||
     minute > 59 ||
-    second > 59 ||
+    second > 60 ||
     offsetHour > 23 ||
     offsetMinute > 59
   ) {
     return null;
   }
 
+  const leapSecondMs = second === 60 ? 1_000 : 0;
+  const normalizedSecond = second === 60 ? 59 : second;
   const millisecond = Number(fraction.padEnd(3, '0').slice(0, 3) || '0');
   const date = new Date(0);
   date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(hour, minute, second, millisecond);
+  date.setUTCHours(hour, minute, normalizedSecond, millisecond + leapSecondMs);
   let timestampMs = date.getTime();
 
   if (offsetSign) {
