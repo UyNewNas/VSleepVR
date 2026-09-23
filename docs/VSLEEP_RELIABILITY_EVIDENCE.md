@@ -29,6 +29,20 @@ The current observe-only HMD, SteamVR-process, and VRChat-process producers also
 
 The real producer functions are covered from the write side by `producer_contract_tests::observe_only_producers_emit_only_authoritative_observed_pairs`, while `observer::tests::production_observer_guard_rejects_non_authoritative_observed_rows_before_persistence` verifies the new fail-closed write guard itself. The producer contract regression invokes the real HMD, SteamVR-process, and VRChat-process observer entry points, checks their exact `source + kind + observed` tuples, and verifies that the persisted journal contains only authority-qualified rows plus the VSleep session boundaries. This complements the classifier-side 420-combination authority matrix with a producer-side contract.
 
+## Recording completeness
+
+`SessionReport.recording` is the backend-owned recording-integrity summary. It exposes `status`, `start_timestamp_utc`, and `end_timestamp_utc` so CLI/UI/export consumers do not have to independently reinterpret raw boundary rows.
+
+The status is conservative and source-qualified:
+
+- `complete`: one authoritative, parseable start and one authoritative, parseable end in chronological order;
+- `missing_start` / `missing_end` / `missing_both`: the corresponding authoritative edge is absent;
+- `invalid_order`: both unique edges exist but the end precedes the start;
+- `ambiguous_boundaries`: at least one side has more than one authoritative, parseable boundary; a unique opposite edge is still retained as a trustworthy one-sided bound;
+- `ambiguous_session`: the core report was asked to correlate observations from more than one session, so no recording boundary claim is made.
+
+Malformed, inferred, or wrong-source boundary rows remain forensic observations but cannot upgrade the recording status or establish an edge.
+
 ## Derivation invariants
 
 Derived reliability obeys all of the following rules:
@@ -75,5 +89,5 @@ For any new producer or event kind, reviewers should check:
 - whether the same row is accepted identically by core and persisted report construction;
 - whether wrong-source rows remain present in `observations` but inert for derivation;
 - whether equal-timestamp ordering is append-order independent;
-- whether complete and partial session bounds are applied consistently to classification, uptime, and the frontend report view;
+- whether complete and partial session bounds are applied consistently to classification, uptime, recording completeness, and the frontend report view;
 - whether tests cover both an accepted source/kind pair and a rejected near-miss pair.
