@@ -360,13 +360,24 @@ export class VSleepReportService {
   ): boolean {
     const timestampMs = this.parseTimestampMs(timestampUtc);
     if (timestampMs === null) return false;
-    if (boundary.status !== 'complete') return true;
+
+    // A partial recording still contains trustworthy one-sided bounds. Use any
+    // unique authoritative boundary that is available instead of dropping all
+    // bounds merely because the opposite edge is missing or ambiguous. This is
+    // especially important for host/app-exit truncation: a missing session end
+    // must not let pre-session derived classifications leak into the report.
+    // Reversed boundaries are internally inconsistent, so keep evidence visible
+    // rather than inventing a usable interval from contradictory timestamps.
+    if (boundary.status === 'invalid_order') return true;
 
     const startMs = boundary.startTimestampUtc
       ? this.parseTimestampMs(boundary.startTimestampUtc)
       : null;
     const endMs = boundary.endTimestampUtc ? this.parseTimestampMs(boundary.endTimestampUtc) : null;
-    return startMs !== null && endMs !== null && timestampMs >= startMs && timestampMs <= endMs;
+
+    if (startMs !== null && timestampMs < startMs) return false;
+    if (endMs !== null && timestampMs > endMs) return false;
+    return true;
   }
 
   private parseTimestampMs(timestampUtc: string): number | null {
