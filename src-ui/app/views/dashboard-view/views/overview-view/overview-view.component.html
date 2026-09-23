@@ -115,8 +115,12 @@
     </div>
     @if (vsleepReportLoading) {
       <div class="vsleep-report-state"><div class="small-spinner"></div></div>
+    } @else if (vsleepReportIntegrityFailed) {
+      <div class="vsleep-report-state">
+        Report integrity check failed · raw journal left unchanged
+      </div>
     } @else if (vsleepReportFailed) {
-      <div class="vsleep-report-state">!</div>
+      <div class="vsleep-report-state">Unable to load VSleep report</div>
     } @else if (vsleepReport) {
       <div class="vsleep-report-body">
         <div class="vsleep-summary-column">
