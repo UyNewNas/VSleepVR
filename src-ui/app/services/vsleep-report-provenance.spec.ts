@@ -131,6 +131,49 @@ describe('VSleep derived classification provenance', () => {
     );
   });
 
+  it('uses the first authoritative observation as the missing-start uptime fallback', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.observations[1].source = 'sleep_mode';
+    report.recording = {
+      status: 'missing_start',
+      start_timestamp_utc: null,
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    };
+    setUptimeWindow(report, 60_000);
+
+    expect(validateVSleepClassificationProvenance(report)).toBe(report);
+  });
+
+  it('rejects a missing-start uptime window stretched by non-authoritative evidence', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.observations[1].source = 'sleep_mode';
+    report.recording = {
+      status: 'missing_start',
+      start_timestamp_utc: null,
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    };
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /missing_start recording requires observed window to equal the backend authoritative-evidence window \(60000\)/
+    );
+  });
+
+  it('uses the last authoritative observation as the missing-end uptime fallback', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.observations[2].source = 'sleep_mode';
+    report.recording = {
+      status: 'missing_end',
+      start_timestamp_utc: '2026-09-21T02:40:00.000Z',
+      end_timestamp_utc: null,
+    };
+    setUptimeWindow(report, 60_000);
+
+    expect(validateVSleepClassificationProvenance(report)).toBe(report);
+  });
+
   it('rejects a backend recording start that is not present as raw authoritative evidence', () => {
     const report = reportFixture();
     report.classifications = [];
@@ -179,6 +222,9 @@ describe('VSleep derived classification provenance', () => {
       start_timestamp_utc: '2026-09-21T02:42:00.000Z',
       end_timestamp_utc: null,
     };
+    report.observations[1].timestamp_utc = '2026-09-21T02:42:00.000Z';
+    report.observations[2].source = 'sleep_mode';
+    setUptimeWindow(report, 0);
 
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
       /derived classification precedes authoritative recording start/
@@ -192,6 +238,9 @@ describe('VSleep derived classification provenance', () => {
       start_timestamp_utc: null,
       end_timestamp_utc: '2026-09-21T02:40:00.000Z',
     };
+    report.observations[1].source = 'sleep_mode';
+    report.observations[2].timestamp_utc = '2026-09-21T02:40:00.000Z';
+    setUptimeWindow(report, 0);
 
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
       /derived classification follows authoritative recording end/
@@ -205,6 +254,12 @@ describe('VSleep derived classification provenance', () => {
       start_timestamp_utc: '2026-09-21T02:42:00.000Z',
       end_timestamp_utc: null,
     };
+    report.observations[1].timestamp_utc = '2026-09-21T02:42:00.000Z';
+    report.observations[2].timestamp_utc = '2026-09-21T02:43:00.000Z';
+    report.observations.push({
+      ...report.observations[2],
+      timestamp_utc: '2026-09-21T02:44:00.000Z',
+    });
 
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
       /derived classification precedes authoritative recording start/
@@ -220,6 +275,7 @@ describe('VSleep derived classification provenance', () => {
     };
     report.observations[1].timestamp_utc = '2026-09-21T03:00:00.000Z';
     report.observations[2].timestamp_utc = '2026-09-21T02:00:00.000Z';
+    setUptimeWindow(report, 3_600_000);
 
     expect(validateVSleepClassificationProvenance(report)).toBe(report);
   });
