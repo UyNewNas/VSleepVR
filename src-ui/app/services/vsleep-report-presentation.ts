@@ -3,6 +3,7 @@ import type {
   VSleepEventConfidence,
   VSleepEventKind,
   VSleepEventSource,
+  VSleepSessionBoundaryStatus,
   VSleepSessionEvent,
 } from './vsleep-report.service';
 
@@ -58,4 +59,46 @@ export function vsleepClassificationEvidenceLabel(confidence: VSleepEventConfide
 
 export function vsleepClassificationIsInference(confidence: VSleepEventConfidence): boolean {
   return confidence !== 'observed';
+}
+
+export function vsleepRecordingIntegrityEvidenceLabel(
+  status: VSleepSessionBoundaryStatus
+): string {
+  switch (status) {
+    case 'complete':
+      return 'derived · authoritative start/end';
+    case 'missing_start':
+      return 'derived · authoritative end only';
+    case 'missing_end':
+      return 'derived · authoritative start only';
+    case 'missing_both':
+      return 'derived · no authoritative session boundaries';
+    case 'invalid_order':
+      return 'derived · contradictory boundary pair';
+    case 'ambiguous_boundaries':
+      return 'derived · duplicate boundary evidence';
+    case 'ambiguous_session':
+      return 'quarantined · mixed session evidence';
+  }
+}
+
+export function vsleepUptimeEvidenceLabel(
+  status: VSleepSessionBoundaryStatus,
+  observedWindowMs: number | null
+): string {
+  if (observedWindowMs === null) return 'derived accounting · no trustworthy timed window';
+
+  switch (status) {
+    case 'complete':
+      return 'derived accounting · bounded by session start/end';
+    case 'missing_start':
+    case 'missing_end':
+    case 'ambiguous_boundaries':
+      return 'derived accounting · partial evidence window';
+    case 'missing_both':
+    case 'invalid_order':
+      return 'derived accounting · authoritative evidence span';
+    case 'ambiguous_session':
+      return 'derived accounting · quarantined mixed-session evidence';
+  }
 }
