@@ -16,19 +16,29 @@ function zeroRuntime(unknownMs: number) {
 describe('VSleep RFC3339 timestamp boundary', () => {
   it('accepts backend-compatible RFC3339 forms and preserves millisecond ordering', () => {
     const utc = parseVSleepRfc3339TimestampMs('2026-09-23T14:00:00.123Z');
+    const space = parseVSleepRfc3339TimestampMs('2026-09-23 14:00:00.123Z');
+    const lowercase = parseVSleepRfc3339TimestampMs('2026-09-23t14:00:00.123z');
     const offset = parseVSleepRfc3339TimestampMs('2026-09-23T15:30:00.123+01:30');
     const submillisecond = parseVSleepRfc3339TimestampMs('2026-09-23T14:00:00.123456789Z');
 
     expect(utc).not.toBeNull();
+    expect(space).toBe(utc);
+    expect(lowercase).toBe(utc);
     expect(offset).toBe(utc);
     expect(submillisecond).toBe(utc);
   });
 
+  it('normalizes Chrono-compatible leap seconds to the backend millisecond instant', () => {
+    expect(parseVSleepRfc3339TimestampMs('2015-06-30T23:59:60.500Z')).toBe(
+      parseVSleepRfc3339TimestampMs('2015-07-01T00:00:00.500Z')
+    );
+  });
+
   it('rejects JavaScript-only timestamp conveniences the backend does not derive from', () => {
-    expect(parseVSleepRfc3339TimestampMs('2026-09-23 14:00:00Z')).toBeNull();
     expect(parseVSleepRfc3339TimestampMs('2026-09-23T14:00:00')).toBeNull();
     expect(parseVSleepRfc3339TimestampMs('2026-02-31T14:00:00Z')).toBeNull();
     expect(parseVSleepRfc3339TimestampMs('2026-09-23T24:00:00Z')).toBeNull();
+    expect(parseVSleepRfc3339TimestampMs('2026-09-23T14:00:00+0000')).toBeNull();
   });
 
   it('fails closed when backend-owned classification time is only Date.parse-compatible', () => {
@@ -42,7 +52,7 @@ describe('VSleep RFC3339 timestamp boundary', () => {
       observations: [],
       classifications: [
         {
-          timestamp_utc: '2026-09-23 14:00:00Z',
+          timestamp_utc: '2026-09-23T14:00:00+0000',
           category: 'unknown_insufficient_evidence',
           confidence: 'inferred_low',
           evidence: ['hmd_disconnected'],
@@ -73,7 +83,7 @@ describe('VSleep RFC3339 timestamp boundary', () => {
       observations: [
         {
           schema_version: 1,
-          timestamp_utc: '2026-09-23 14:00:00Z',
+          timestamp_utc: '2026-09-23T14:00:00+0000',
           session_id: 'session-a',
           source: 'vsleep',
           kind: 'session_started',
