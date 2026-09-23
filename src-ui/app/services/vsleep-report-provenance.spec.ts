@@ -20,6 +20,22 @@ function reportFixture(): VSleepSessionReport {
         kind: 'hmd_disconnected',
         confidence: 'observed',
       },
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:40:00.000Z',
+        session_id: 'session-a',
+        source: 'vsleep',
+        kind: 'session_started',
+        confidence: 'observed',
+      },
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:42:00.000Z',
+        session_id: 'session-a',
+        source: 'vsleep',
+        kind: 'session_ended',
+        confidence: 'observed',
+      },
     ],
     classifications: [
       {
@@ -48,7 +64,7 @@ function setUptimeWindow(report: VSleepSessionReport, observedWindowMs: number |
 }
 
 describe('VSleep derived classification provenance', () => {
-  it('accepts a classification backed by its authoritative observed trigger', () => {
+  it('accepts a classification backed by its authoritative observed trigger and boundaries', () => {
     const report = reportFixture();
     expect(validateVSleepClassificationProvenance(report)).toBe(report);
   });
@@ -69,7 +85,7 @@ describe('VSleep derived classification provenance', () => {
     });
 
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
-      /observations\[1\]\.session_id: current backend report observations must match session_id/
+      /observations\[3\]\.session_id: current backend report observations must match session_id/
     );
   });
 
@@ -113,6 +129,47 @@ describe('VSleep derived classification provenance', () => {
     expect(() => validateVSleepClassificationProvenance(report)).toThrow(
       /complete recording requires observed window to equal authoritative bounds \(120000\)/
     );
+  });
+
+  it('rejects a backend recording start that is not present as raw authoritative evidence', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.observations[1].source = 'sleep_mode';
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /recording\.start_timestamp_utc: backend recording start does not match raw authoritative boundary \(none\)/
+    );
+  });
+
+  it('rejects a backend recording timestamp that disagrees with the unique raw boundary', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.recording = {
+      status: 'complete',
+      start_timestamp_utc: '2026-09-21T02:39:00.000Z',
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    };
+    setUptimeWindow(report, 180_000);
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /recording\.start_timestamp_utc: backend recording start does not match raw authoritative boundary \(2026-09-21T02:40:00.000Z\)/
+    );
+  });
+
+  it('accepts ambiguous boundary metadata only when raw authoritative multiplicity supports it', () => {
+    const report = reportFixture();
+    report.classifications = [];
+    report.observations.push({
+      ...report.observations[1],
+      timestamp_utc: '2026-09-21T02:40:30.000Z',
+    });
+    report.recording = {
+      status: 'ambiguous_boundaries',
+      start_timestamp_utc: null,
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    };
+
+    expect(validateVSleepClassificationProvenance(report)).toBe(report);
   });
 
   it('rejects a derived classification before a trustworthy recording start', () => {
@@ -161,6 +218,8 @@ describe('VSleep derived classification provenance', () => {
       start_timestamp_utc: '2026-09-21T03:00:00.000Z',
       end_timestamp_utc: '2026-09-21T02:00:00.000Z',
     };
+    report.observations[1].timestamp_utc = '2026-09-21T03:00:00.000Z';
+    report.observations[2].timestamp_utc = '2026-09-21T02:00:00.000Z';
 
     expect(validateVSleepClassificationProvenance(report)).toBe(report);
   });
