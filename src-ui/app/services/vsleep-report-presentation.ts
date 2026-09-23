@@ -1,5 +1,10 @@
 import { parseVSleepRfc3339TimestampMs } from './vsleep-report-timestamp';
-import type { VSleepEventKind, VSleepEventSource, VSleepSessionEvent } from './vsleep-report.service';
+import type {
+  VSleepEventConfidence,
+  VSleepEventKind,
+  VSleepEventSource,
+  VSleepSessionEvent,
+} from './vsleep-report.service';
 
 const authoritativePresentationKinds: Partial<
   Record<VSleepEventSource, ReadonlySet<VSleepEventKind>>
@@ -36,4 +41,21 @@ export function vsleepObservationEvidenceLabel(observation: VSleepPresentationOb
 
 export function vsleepObservationMarker(observation: VSleepPresentationObservation): '●' | '○' {
   return isPresentationQualifiedObservation(observation) ? '●' : '○';
+}
+
+export function vsleepClassificationEvidenceLabel(confidence: VSleepEventConfidence): string {
+  switch (confidence) {
+    case 'observed':
+      return 'derived · observed evidence';
+    case 'inferred_high':
+      return 'inferred · high';
+    case 'inferred_medium':
+      return 'inferred · medium';
+    case 'inferred_low':
+      return 'inferred · low';
+  }
+}
+
+export function vsleepClassificationIsInference(confidence: VSleepEventConfidence): boolean {
+  return confidence !== 'observed';
 }
