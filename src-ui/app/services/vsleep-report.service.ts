@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { invoke } from '@tauri-apps/api/core';
 import { validateVSleepClassificationProvenance } from './vsleep-report-provenance';
 import { parseVSleepSessionReport } from './vsleep-report-schema';
+import { parseVSleepRfc3339TimestampMs } from './vsleep-report-timestamp';
 
 export type VSleepEventSource =
   | 'vsleep'
@@ -409,8 +410,7 @@ export class VSleepReportService {
   }
 
   private parseTimestampMs(timestampUtc: string): number | null {
-    const timestampMs = Date.parse(timestampUtc);
-    return Number.isFinite(timestampMs) ? timestampMs : null;
+    return parseVSleepRfc3339TimestampMs(timestampUtc);
   }
 
   private isIncidentCategory(category: VSleepFailureClass): category is VSleepIncidentCategory {
