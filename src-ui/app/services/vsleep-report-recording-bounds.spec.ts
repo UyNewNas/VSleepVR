@@ -106,6 +106,54 @@ describe('VSleepReportService recording-bounded incident windows', () => {
     expect(incidents[0].startTimestampUtc).toBe('2026-09-21T08:00:00.000Z');
   });
 
+  it('uses a known start boundary to reject derived data before a missing-end recording', () => {
+    const report = reportFixture();
+    report.observations = [observation('session_started', '2026-09-20T23:48:00.000Z')];
+    report.classifications = [
+      classification('2026-09-20T23:40:00.000Z'),
+      classification('2026-09-21T02:41:00.000Z'),
+    ];
+
+    const service = new VSleepReportService();
+    const boundary = service.summarizeSessionBoundaries(report);
+    const timeline = service.toTimelineEntries(report);
+    const incidents = service.toIncidentWindows(report);
+
+    expect(boundary.status).toBe('missing_end');
+    expect(
+      timeline
+        .filter((entry) => entry.entryType === 'classification')
+        .map((entry) => entry.timestampUtc)
+    ).toEqual(['2026-09-21T02:41:00.000Z']);
+    expect(incidents.map((incident) => incident.startTimestampUtc)).toEqual([
+      '2026-09-21T02:41:00.000Z',
+    ]);
+  });
+
+  it('uses a known end boundary to reject derived data after a missing-start recording', () => {
+    const report = reportFixture();
+    report.observations = [observation('session_ended', '2026-09-21T07:31:00.000Z')];
+    report.classifications = [
+      classification('2026-09-21T07:30:00.000Z'),
+      classification('2026-09-21T07:40:00.000Z'),
+    ];
+
+    const service = new VSleepReportService();
+    const boundary = service.summarizeSessionBoundaries(report);
+    const timeline = service.toTimelineEntries(report);
+    const incidents = service.toIncidentWindows(report);
+
+    expect(boundary.status).toBe('missing_start');
+    expect(
+      timeline
+        .filter((entry) => entry.entryType === 'classification')
+        .map((entry) => entry.timestampUtc)
+    ).toEqual(['2026-09-21T07:30:00.000Z']);
+    expect(incidents.map((incident) => incident.startTimestampUtc)).toEqual([
+      '2026-09-21T07:30:00.000Z',
+    ]);
+  });
+
   it('does not let a wrong-source observed event forge a complete recording boundary', () => {
     const report = reportFixture();
     report.observations = [
