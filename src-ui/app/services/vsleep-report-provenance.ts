@@ -14,6 +14,22 @@ const authoritativeTriggerSources: Partial<Record<VSleepEventKind, VSleepEventSo
   windows_resume: 'windows_power',
 };
 
+const authoritativeObservationKinds: Partial<
+  Record<VSleepEventSource, ReadonlySet<VSleepEventKind>>
+> = {
+  vsleep: new Set(['session_started', 'session_ended']),
+  open_vr: new Set(['hmd_connected', 'hmd_disconnected']),
+  steam_vr: new Set([
+    'steam_vr_started',
+    'steam_vr_stopped',
+    'steam_vr_standby_entered',
+    'steam_vr_standby_exited',
+  ]),
+  vrchat_process: new Set(['vrchat_started', 'vrchat_stopped']),
+  windows_power: new Set(['windows_suspend', 'windows_resume', 'windows_power_event']),
+  sleep_mode: new Set(['sleep_mode_enabled', 'sleep_mode_disabled']),
+};
+
 function authoritativeBoundaryTimestamps(
   report: VSleepSessionReport,
   kind: Extract<VSleepEventKind, 'session_started' | 'session_ended'>
@@ -27,6 +43,52 @@ function authoritativeBoundaryTimestamps(
         Number.isFinite(Date.parse(observation.timestamp_utc))
     )
     .map((observation) => observation.timestamp_utc);
+}
+
+function authoritativeObservationTimestampRange(
+  report: VSleepSessionReport
+): { firstMs: number; lastMs: number } | null {
+  let firstMs: number | null = null;
+  let lastMs: number | null = null;
+
+  for (const observation of report.observations) {
+    if (observation.confidence !== 'observed') continue;
+    const allowedKinds = authoritativeObservationKinds[observation.source];
+    if (!allowedKinds?.has(observation.kind)) continue;
+
+    const timestampMs = Date.parse(observation.timestamp_utc);
+    if (!Number.isFinite(timestampMs)) continue;
+    firstMs = firstMs === null ? timestampMs : Math.min(firstMs, timestampMs);
+    lastMs = lastMs === null ? timestampMs : Math.max(lastMs, timestampMs);
+  }
+
+  return firstMs === null || lastMs === null ? null : { firstMs, lastMs };
+}
+
+function expectedObservedWindowMs(report: VSleepSessionReport): number | null {
+  const range = authoritativeObservationTimestampRange(report);
+  if (!range) return null;
+
+  const recording = report.recording;
+  const ignoreRecordingBounds = recording?.status === 'invalid_order';
+  const startMs =
+    !ignoreRecordingBounds && recording?.start_timestamp_utc
+      ? Date.parse(recording.start_timestamp_utc)
+      : range.firstMs;
+  const endMs =
+    !ignoreRecordingBounds && recording?.end_timestamp_utc
+      ? Date.parse(recording.end_timestamp_utc)
+      : range.lastMs;
+  const observedWindowMs = Math.max(endMs - startMs, 0);
+
+  if (!Number.isSafeInteger(observedWindowMs)) {
+    throw new VSleepReportIntegrityError(
+      'uptime.observed_window_ms',
+      'authoritative evidence window exceeds the JavaScript safe integer range'
+    );
+  }
+
+  return observedWindowMs;
 }
 
 function expectedRecordingStatus(
@@ -118,19 +180,13 @@ function validateBackendOwnedReportConsistency(report: VSleepSessionReport): voi
     );
   }
 
-  if (recording.status === 'complete') {
-    const startMs = Date.parse(recording.start_timestamp_utc ?? '');
-    const endMs = Date.parse(recording.end_timestamp_utc ?? '');
-    const expectedWindowMs = endMs - startMs;
-    if (
-      Number.isSafeInteger(expectedWindowMs) &&
-      report.uptime.observed_window_ms !== expectedWindowMs
-    ) {
-      throw new VSleepReportIntegrityError(
-        'uptime.observed_window_ms',
-        `complete recording requires observed window to equal authoritative bounds (${expectedWindowMs})`
-      );
-    }
+  const expectedWindowMs = expectedObservedWindowMs(report);
+  if (report.uptime.observed_window_ms !== expectedWindowMs) {
+    const detail =
+      recording.status === 'complete'
+        ? `complete recording requires observed window to equal authoritative bounds (${expectedWindowMs})`
+        : `${recording.status} recording requires observed window to equal the backend authoritative-evidence window (${expectedWindowMs ?? 'null'})`;
+    throw new VSleepReportIntegrityError('uptime.observed_window_ms', detail);
   }
 }
 
