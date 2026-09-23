@@ -77,3 +77,16 @@ export function parseVSleepRfc3339TimestampMs(value: string): number | null {
 
   return Number.isSafeInteger(timestampMs) ? timestampMs : null;
 }
+
+/**
+ * Convert only backend-qualified timestamps into a displayable `Date`.
+ *
+ * Raw forensic observations may intentionally retain strings that JavaScript can
+ * parse even though the Rust backend would not use them for derivation. UI
+ * formatting must not silently promote those strings into apparently trustworthy
+ * local times, so every display conversion crosses the same RFC3339 boundary.
+ */
+export function toVSleepDisplayDate(value: string): Date | null {
+  const timestampMs = parseVSleepRfc3339TimestampMs(value);
+  return timestampMs === null ? null : new Date(timestampMs);
+}
