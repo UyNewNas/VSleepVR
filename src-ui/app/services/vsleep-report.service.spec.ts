@@ -217,6 +217,70 @@ describe('VSleepReportService', () => {
     expect(incidents[0].recoveryObservation).toBeNull();
   });
 
+  it('requires an authoritative source before an observed recovery can close an incident', () => {
+    const cases = [
+      {
+        category: 'hmd_or_link_failure',
+        kind: 'hmd_connected',
+        forgedSource: 'vrchat_log',
+        authoritativeSource: 'open_vr',
+      },
+      {
+        category: 'steam_vr_failure',
+        kind: 'steam_vr_started',
+        forgedSource: 'open_vr',
+        authoritativeSource: 'steam_vr',
+      },
+      {
+        category: 'vrchat_failure',
+        kind: 'vrchat_started',
+        forgedSource: 'vrchat_log',
+        authoritativeSource: 'vrchat_process',
+      },
+    ] as const;
+    const service = new VSleepReportService();
+
+    for (const recoveryCase of cases) {
+      const report = reportFixture();
+      report.classifications = [
+        {
+          ...report.classifications[0],
+          category: recoveryCase.category,
+        },
+      ];
+      report.observations = [
+        {
+          schema_version: 1,
+          timestamp_utc: '2026-09-21T02:47:00.000Z',
+          session_id: 'session-a',
+          source: recoveryCase.forgedSource,
+          kind: recoveryCase.kind,
+          confidence: 'observed',
+        },
+        {
+          schema_version: 1,
+          timestamp_utc: '2026-09-21T02:48:00.000Z',
+          session_id: 'session-a',
+          source: recoveryCase.authoritativeSource,
+          kind: recoveryCase.kind,
+          confidence: 'observed',
+        },
+      ];
+
+      const incidents = service.toIncidentWindows(report);
+
+      expect(incidents).toHaveLength(1);
+      expect(incidents[0]).toMatchObject({
+        category: recoveryCase.category,
+        startTimestampUtc: '2026-09-21T02:41:00.000Z',
+        endTimestampUtc: '2026-09-21T02:48:00.000Z',
+        durationMs: 420_000,
+      });
+      expect(incidents[0].recoveryObservation?.source).toBe(recoveryCase.authoritativeSource);
+      expect(incidents[0].recoveryObservation?.kind).toBe(recoveryCase.kind);
+    }
+  });
+
   it('leaves an interruption open when no recovery observation exists', () => {
     const service = new VSleepReportService();
 
