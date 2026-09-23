@@ -13,6 +13,38 @@ const recordingStatuses = new Set([
   'ambiguous_session',
 ]);
 
+const failureClasses = new Set([
+  'hmd_or_link_failure',
+  'steam_vr_failure',
+  'vrchat_failure',
+  'windows_power_transition',
+  'unknown_insufficient_evidence',
+]);
+
+const classificationEvidenceKinds = new Set([
+  'session_started',
+  'session_ended',
+  'hmd_connected',
+  'hmd_disconnected',
+  'steam_vr_started',
+  'steam_vr_stopped',
+  'steam_vr_standby_entered',
+  'steam_vr_standby_exited',
+  'vrchat_started',
+  'vrchat_stopped',
+  'windows_suspend',
+  'windows_resume',
+  'windows_power_event',
+  'sleep_mode_enabled',
+  'sleep_mode_disabled',
+]);
+
+const unknownFailureTriggerKinds = new Set([
+  'hmd_disconnected',
+  'steam_vr_stopped',
+  'vrchat_stopped',
+]);
+
 export class VSleepReportIntegrityError extends Error {
   constructor(
     readonly path: string,
@@ -35,6 +67,11 @@ function requireString(value: unknown, path: string): asserts value is string {
   if (typeof value !== 'string') fail(path, 'expected string');
 }
 
+function requireNonEmptyString(value: unknown, path: string): asserts value is string {
+  requireString(value, path);
+  if (value.trim().length === 0) fail(path, 'expected non-empty string');
+}
+
 function requireNullableString(value: unknown, path: string): asserts value is string | null {
   if (value !== null && typeof value !== 'string') fail(path, 'expected string or null');
 }
@@ -49,6 +86,11 @@ function requireNonNegativeInteger(value: unknown, path: string): asserts value 
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     fail(path, 'expected non-negative safe integer');
   }
+}
+
+function requireTimestamp(value: unknown, path: string): asserts value is string {
+  requireString(value, path);
+  if (!Number.isFinite(Date.parse(value))) fail(path, 'expected parseable timestamp');
 }
 
 function requireTimestampOrNull(value: unknown, path: string): asserts value is string | null {
@@ -69,17 +111,111 @@ function validateObservation(value: unknown, index: number): void {
   requireString(value['confidence'], `${path}.confidence`);
 }
 
+function requireExactEvidence(
+  evidence: string[],
+  expected: string[],
+  path: string
+): void {
+  if (
+    evidence.length !== expected.length ||
+    evidence.some((kind, evidenceIndex) => kind !== expected[evidenceIndex])
+  ) {
+    fail(path, `expected backend evidence sequence ${expected.join(', ')}`);
+  }
+}
+
+function validateClassificationContract(
+  category: string,
+  confidence: string,
+  evidence: string[],
+  path: string
+): void {
+  switch (category) {
+    case 'hmd_or_link_failure':
+      if (confidence !== 'inferred_medium') {
+        fail(`${path}.confidence`, 'hmd_or_link_failure requires inferred_medium');
+      }
+      requireExactEvidence(
+        evidence,
+        ['hmd_disconnected', 'steam_vr_started', 'vrchat_started'],
+        `${path}.evidence`
+      );
+      break;
+    case 'steam_vr_failure':
+      if (confidence !== 'inferred_medium') {
+        fail(`${path}.confidence`, 'steam_vr_failure requires inferred_medium');
+      }
+      requireExactEvidence(
+        evidence,
+        ['steam_vr_stopped', 'vrchat_started'],
+        `${path}.evidence`
+      );
+      break;
+    case 'vrchat_failure':
+      if (confidence !== 'inferred_medium') {
+        fail(`${path}.confidence`, 'vrchat_failure requires inferred_medium');
+      }
+      requireExactEvidence(
+        evidence,
+        ['vrchat_stopped', 'steam_vr_started'],
+        `${path}.evidence`
+      );
+      break;
+    case 'windows_power_transition':
+      if (confidence !== 'observed') {
+        fail(`${path}.confidence`, 'windows_power_transition requires observed');
+      }
+      if (
+        evidence.length !== 1 ||
+        (evidence[0] !== 'windows_suspend' && evidence[0] !== 'windows_resume')
+      ) {
+        fail(`${path}.evidence`, 'windows_power_transition requires one suspend/resume observation');
+      }
+      break;
+    case 'unknown_insufficient_evidence':
+      if (confidence !== 'inferred_low') {
+        fail(`${path}.confidence`, 'unknown_insufficient_evidence requires inferred_low');
+      }
+      if (evidence.length !== 1 || !unknownFailureTriggerKinds.has(evidence[0])) {
+        fail(
+          `${path}.evidence`,
+          'unknown_insufficient_evidence requires one failure-like trigger observation'
+        );
+      }
+      break;
+    default:
+      fail(`${path}.category`, `unknown category ${category}`);
+  }
+}
+
 function validateClassification(value: unknown, index: number): void {
   const path = `classifications[${index}]`;
   if (!isRecord(value)) fail(path, 'expected object');
-  requireString(value['timestamp_utc'], `${path}.timestamp_utc`);
-  requireString(value['category'], `${path}.category`);
-  requireString(value['confidence'], `${path}.confidence`);
-  requireString(value['rationale'], `${path}.rationale`);
-  if (!Array.isArray(value['evidence'])) fail(`${path}.evidence`, 'expected array');
-  value['evidence'].forEach((entry, evidenceIndex) =>
-    requireString(entry, `${path}.evidence[${evidenceIndex}]`)
-  );
+
+  requireTimestamp(value['timestamp_utc'], `${path}.timestamp_utc`);
+
+  const category = value['category'];
+  requireString(category, `${path}.category`);
+  if (!failureClasses.has(category)) {
+    fail(`${path}.category`, `unknown category ${category}`);
+  }
+
+  const confidence = value['confidence'];
+  requireString(confidence, `${path}.confidence`);
+  requireNonEmptyString(value['rationale'], `${path}.rationale`);
+
+  const rawEvidence = value['evidence'];
+  if (!Array.isArray(rawEvidence)) fail(`${path}.evidence`, 'expected array');
+  const evidence = rawEvidence.map((entry, evidenceIndex) => {
+    const evidencePath = `${path}.evidence[${evidenceIndex}]`;
+    requireString(entry, evidencePath);
+    if (!classificationEvidenceKinds.has(entry)) {
+      fail(evidencePath, `unknown derived evidence kind ${entry}`);
+    }
+    return entry;
+  });
+
+  validateClassificationContract(category, confidence, evidence, path);
 }
 
 interface ValidatedRuntimeUptime {
