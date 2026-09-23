@@ -80,6 +80,8 @@ Examples:
 
 For a partial recording, `observed_window_ms` uses every trustworthy boundary that exists. The missing side falls back only to the first/last authoritative timestamp actually present in the journal; it is therefore an observed evidence span, not a claim that the VSleep session began earlier or continued later.
 
+The report transport treats uptime as an integrity-qualified derived summary rather than three unrelated counters. For every runtime, `observed_up_ms + observed_down_ms + unknown_ms` must equal `observed_window_ms` exactly. All duration and transition fields must be non-negative safe integers. If `observed_window_ms` is `null`, the backend has no trustworthy timed evidence window and every runtime summary must remain at the zero-valued default. Payloads that violate these cross-field invariants fail closed before UI adapters consume them; raw journal evidence is not rewritten.
+
 A report must never turn absence of evidence into downtime.
 
 ## Anti-drift review checklist
