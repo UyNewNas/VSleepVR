@@ -22,7 +22,8 @@ const authoritativeTriggerSources: Partial<Record<VSleepEventKind, VSleepEventSo
  * This is intentionally narrower than re-running the backend classifier in the
  * frontend. Supporting runtime state remains backend-owned. We only require the
  * directly observed trigger that the backend copies into the classification
- * timestamp/evidence tuple.
+ * timestamp/evidence tuple, plus consistency with any trustworthy recording
+ * bounds the backend already exposed.
  */
 export function validateVSleepClassificationProvenance(
   report: VSleepSessionReport
@@ -39,11 +40,40 @@ export function validateVSleepClassificationProvenance(
   report.classifications.forEach((classification, index) => {
     const triggerKind = classification.evidence[0];
     const expectedSource = authoritativeTriggerSources[triggerKind];
-    const path = `classifications[${index}].evidence[0]`;
+    const evidencePath = `classifications[${index}].evidence[0]`;
+    const timestampPath = `classifications[${index}].timestamp_utc`;
+
+    // Backend classification applies every unique authoritative recording edge
+    // independently. Mirror only that transport invariant here; do not infer a
+    // replacement interval when the two unique boundaries are reversed, because
+    // the backend deliberately treats invalid_order as evidence-visible but
+    // unbounded rather than guessing which edge is wrong.
+    if (report.recording && report.recording.status !== 'invalid_order') {
+      const classificationMs = Date.parse(classification.timestamp_utc);
+      const startMs = report.recording.start_timestamp_utc
+        ? Date.parse(report.recording.start_timestamp_utc)
+        : null;
+      const endMs = report.recording.end_timestamp_utc
+        ? Date.parse(report.recording.end_timestamp_utc)
+        : null;
+
+      if (startMs !== null && classificationMs < startMs) {
+        throw new VSleepReportIntegrityError(
+          timestampPath,
+          'derived classification precedes authoritative recording start'
+        );
+      }
+      if (endMs !== null && classificationMs > endMs) {
+        throw new VSleepReportIntegrityError(
+          timestampPath,
+          'derived classification follows authoritative recording end'
+        );
+      }
+    }
 
     if (!expectedSource) {
       throw new VSleepReportIntegrityError(
-        path,
+        evidencePath,
         `no authoritative trigger source is defined for ${triggerKind}`
       );
     }
@@ -59,7 +89,7 @@ export function validateVSleepClassificationProvenance(
 
     if (!hasAuthoritativeTrigger) {
       throw new VSleepReportIntegrityError(
-        path,
+        evidencePath,
         `missing authoritative observed trigger ${expectedSource}/${triggerKind} at classification timestamp`
       );
     }
