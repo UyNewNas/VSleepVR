@@ -13,8 +13,18 @@ const recordingStatuses = new Set([
   'ambiguous_session',
 ]);
 
+export class VSleepReportIntegrityError extends Error {
+  constructor(
+    readonly path: string,
+    readonly detail: string
+  ) {
+    super(`Invalid VSleep session report payload at ${path}: ${detail}`);
+    this.name = 'VSleepReportIntegrityError';
+  }
+}
+
 function fail(path: string, detail: string): never {
-  throw new Error(`Invalid VSleep session report payload at ${path}: ${detail}`);
+  throw new VSleepReportIntegrityError(path, detail);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
