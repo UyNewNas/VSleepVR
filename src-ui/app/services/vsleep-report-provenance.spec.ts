@@ -6,6 +6,11 @@ import type { VSleepSessionReport } from './vsleep-report.service';
 function reportFixture(): VSleepSessionReport {
   return {
     session_id: 'session-a',
+    recording: {
+      status: 'complete',
+      start_timestamp_utc: '2026-09-21T02:40:00.000Z',
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    },
     observations: [
       {
         schema_version: 1,
@@ -37,6 +42,63 @@ function reportFixture(): VSleepSessionReport {
 describe('VSleep derived classification provenance', () => {
   it('accepts a classification backed by its authoritative observed trigger', () => {
     const report = reportFixture();
+    expect(validateVSleepClassificationProvenance(report)).toBe(report);
+  });
+
+  it('keeps legacy reports without backend recording metadata compatible', () => {
+    const report = reportFixture();
+    delete report.recording;
+
+    expect(validateVSleepClassificationProvenance(report)).toBe(report);
+  });
+
+  it('rejects a derived classification before a trustworthy recording start', () => {
+    const report = reportFixture();
+    report.recording = {
+      status: 'missing_end',
+      start_timestamp_utc: '2026-09-21T02:42:00.000Z',
+      end_timestamp_utc: null,
+    };
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /derived classification precedes authoritative recording start/
+    );
+  });
+
+  it('rejects a derived classification after a trustworthy recording end', () => {
+    const report = reportFixture();
+    report.recording = {
+      status: 'missing_start',
+      start_timestamp_utc: null,
+      end_timestamp_utc: '2026-09-21T02:40:00.000Z',
+    };
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /derived classification follows authoritative recording end/
+    );
+  });
+
+  it('uses a retained one-sided edge when the opposite recording boundary is ambiguous', () => {
+    const report = reportFixture();
+    report.recording = {
+      status: 'ambiguous_boundaries',
+      start_timestamp_utc: '2026-09-21T02:42:00.000Z',
+      end_timestamp_utc: null,
+    };
+
+    expect(() => validateVSleepClassificationProvenance(report)).toThrow(
+      /derived classification precedes authoritative recording start/
+    );
+  });
+
+  it('does not invent usable bounds for an invalid-order recording', () => {
+    const report = reportFixture();
+    report.recording = {
+      status: 'invalid_order',
+      start_timestamp_utc: '2026-09-21T03:00:00.000Z',
+      end_timestamp_utc: '2026-09-21T02:00:00.000Z',
+    };
+
     expect(validateVSleepClassificationProvenance(report)).toBe(report);
   });
 
