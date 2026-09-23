@@ -1,4 +1,5 @@
 import { VSleepReportIntegrityError } from './vsleep-report-schema';
+import { parseVSleepRfc3339TimestampMs } from './vsleep-report-timestamp';
 import type {
   VSleepEventKind,
   VSleepEventSource,
@@ -30,6 +31,14 @@ const authoritativeObservationKinds: Partial<
   sleep_mode: new Set(['sleep_mode_enabled', 'sleep_mode_disabled']),
 };
 
+function requireBackendTimestampMs(timestampUtc: string, path: string): number {
+  const timestampMs = parseVSleepRfc3339TimestampMs(timestampUtc);
+  if (timestampMs === null) {
+    throw new VSleepReportIntegrityError(path, 'expected parseable timestamp in RFC3339 format');
+  }
+  return timestampMs;
+}
+
 function authoritativeBoundaryTimestamps(
   report: VSleepSessionReport,
   kind: Extract<VSleepEventKind, 'session_started' | 'session_ended'>
@@ -40,7 +49,7 @@ function authoritativeBoundaryTimestamps(
         observation.source === 'vsleep' &&
         observation.kind === kind &&
         observation.confidence === 'observed' &&
-        Number.isFinite(Date.parse(observation.timestamp_utc))
+        parseVSleepRfc3339TimestampMs(observation.timestamp_utc) !== null
     )
     .map((observation) => observation.timestamp_utc);
 }
@@ -56,8 +65,8 @@ function authoritativeObservationTimestampRange(
     const allowedKinds = authoritativeObservationKinds[observation.source];
     if (!allowedKinds?.has(observation.kind)) continue;
 
-    const timestampMs = Date.parse(observation.timestamp_utc);
-    if (!Number.isFinite(timestampMs)) continue;
+    const timestampMs = parseVSleepRfc3339TimestampMs(observation.timestamp_utc);
+    if (timestampMs === null) continue;
     firstMs = firstMs === null ? timestampMs : Math.min(firstMs, timestampMs);
     lastMs = lastMs === null ? timestampMs : Math.max(lastMs, timestampMs);
   }
@@ -73,11 +82,11 @@ function expectedObservedWindowMs(report: VSleepSessionReport): number | null {
   const ignoreRecordingBounds = recording?.status === 'invalid_order';
   const startMs =
     !ignoreRecordingBounds && recording?.start_timestamp_utc
-      ? Date.parse(recording.start_timestamp_utc)
+      ? requireBackendTimestampMs(recording.start_timestamp_utc, 'recording.start_timestamp_utc')
       : range.firstMs;
   const endMs =
     !ignoreRecordingBounds && recording?.end_timestamp_utc
-      ? Date.parse(recording.end_timestamp_utc)
+      ? requireBackendTimestampMs(recording.end_timestamp_utc, 'recording.end_timestamp_utc')
       : range.lastMs;
   const observedWindowMs = Math.max(endMs - startMs, 0);
 
@@ -99,7 +108,9 @@ function expectedRecordingStatus(
   if (starts.length === 0 && ends.length === 0) return 'missing_both';
   if (starts.length === 0) return 'missing_start';
   if (ends.length === 0) return 'missing_end';
-  return Date.parse(ends[0]) < Date.parse(starts[0]) ? 'invalid_order' : 'complete';
+  const startMs = parseVSleepRfc3339TimestampMs(starts[0]);
+  const endMs = parseVSleepRfc3339TimestampMs(ends[0]);
+  return endMs !== null && startMs !== null && endMs < startMs ? 'invalid_order' : 'complete';
 }
 
 function validateBackendOwnedRecordingProvenance(report: VSleepSessionReport): void {
@@ -224,6 +235,7 @@ export function validateVSleepClassificationProvenance(
     const expectedSource = authoritativeTriggerSources[triggerKind];
     const evidencePath = `classifications[${index}].evidence[0]`;
     const timestampPath = `classifications[${index}].timestamp_utc`;
+    const classificationMs = requireBackendTimestampMs(classification.timestamp_utc, timestampPath);
 
     // Backend classification applies every unique authoritative recording edge
     // independently. Mirror only that transport invariant here; do not infer a
@@ -231,12 +243,14 @@ export function validateVSleepClassificationProvenance(
     // the backend deliberately treats invalid_order as evidence-visible but
     // unbounded rather than guessing which edge is wrong.
     if (report.recording && report.recording.status !== 'invalid_order') {
-      const classificationMs = Date.parse(classification.timestamp_utc);
       const startMs = report.recording.start_timestamp_utc
-        ? Date.parse(report.recording.start_timestamp_utc)
+        ? requireBackendTimestampMs(
+            report.recording.start_timestamp_utc,
+            'recording.start_timestamp_utc'
+          )
         : null;
       const endMs = report.recording.end_timestamp_utc
-        ? Date.parse(report.recording.end_timestamp_utc)
+        ? requireBackendTimestampMs(report.recording.end_timestamp_utc, 'recording.end_timestamp_utc')
         : null;
 
       if (startMs !== null && classificationMs < startMs) {
