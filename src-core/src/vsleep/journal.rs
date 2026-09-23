@@ -107,13 +107,31 @@ impl SessionJournalStore {
 
     pub fn read_session(&self, path: &Path) -> Result<Vec<SessionEvent>, JournalError> {
         let file = File::open(path)?;
-        BufReader::new(file)
-            .lines()
-            .map(|line| {
-                let line = line?;
-                Ok(serde_json::from_str(&line)?)
-            })
-            .collect()
+        let mut reader = BufReader::new(file);
+        let mut events = Vec::new();
+        let mut record = Vec::new();
+
+        loop {
+            record.clear();
+            let bytes_read = reader.read_until(b'\n', &mut record)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let newline_terminated = record.ends_with(b"\n");
+            match serde_json::from_slice::<SessionEvent>(&record) {
+                Ok(event) => events.push(event),
+                Err(_) if !newline_terminated && !events.is_empty() => {
+                    // A process or machine can stop after only part of the next JSONL
+                    // record reaches disk. Keep every prior flushed observation readable,
+                    // but never rewrite or try to repair the forensic tail automatically.
+                    break;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+
+        Ok(events)
     }
 
     pub fn read_session_by_file_name(
@@ -302,6 +320,73 @@ mod tests {
         assert!(events
             .iter()
             .all(|event| event.session_id == journal.session_id()));
+    }
+
+    #[test]
+    fn preserves_flushed_events_before_an_unterminated_torn_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+        let journal = store.start_session().unwrap();
+        let path = journal.path().to_path_buf();
+        drop(journal);
+
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"partial\":")
+            .unwrap();
+
+        let events = store.read_session(&path).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, EventKind::SessionStarted);
+    }
+
+    #[test]
+    fn accepts_a_complete_final_record_without_a_newline() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+        let journal = store.start_session().unwrap();
+        let path = journal.path().to_path_buf();
+        let session_id = journal.session_id().to_string();
+        drop(journal);
+
+        let event = SessionEvent::new(
+            session_id,
+            EventSource::OpenVr,
+            EventKind::HmdDisconnected,
+            EventConfidence::Observed,
+        );
+        let bytes = serde_json::to_vec(&event).unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+
+        let events = store.read_session(&path).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind, EventKind::HmdDisconnected);
+    }
+
+    #[test]
+    fn rejects_malformed_newline_terminated_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+        let journal = store.start_session().unwrap();
+        let path = journal.path().to_path_buf();
+        drop(journal);
+
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"corrupt\":\n")
+            .unwrap();
+
+        let result = store.read_session(&path);
+        assert!(matches!(result, Err(JournalError::Json(_))));
     }
 
     #[test]
