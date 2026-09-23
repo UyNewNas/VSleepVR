@@ -29,8 +29,9 @@ function daysInMonth(year: number, month: number): number {
  * number of fractional digits (discarding precision past nanoseconds). JavaScript
  * `Date.parse` also accepts non-RFC3339 conveniences that Chrono rejects, such as
  * a missing timezone, `24:00:00`, invalid calendar dates that are normalized into
- * the next month, or colonless numeric offsets. Keep those forms forensic-only so
- * evidence cannot become authoritative merely after crossing the Tauri boundary.
+ * the next month, or colonless numeric offsets. Keep those forms out of the
+ * backend-owned recording/classification/window integrity checks; raw journal rows
+ * remain available to forensic/legacy UI paths without being promoted here.
  */
 export function parseVSleepRfc3339TimestampMs(value: string): number | null {
   const match = rfc3339TimestampPattern.exec(value);
