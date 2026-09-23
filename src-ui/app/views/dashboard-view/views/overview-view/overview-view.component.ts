@@ -134,12 +134,12 @@ export class OverviewViewComponent implements OnInit {
 
   protected vsleepObservationTrustLabel(entry: VSleepTimelineEntry): string {
     if (entry.entryType !== 'observation') return '';
-    return vsleepObservationEvidenceLabel(entry.observation.confidence);
+    return vsleepObservationEvidenceLabel(entry.observation);
   }
 
   protected vsleepTimelineMarker(entry: VSleepTimelineEntry): string {
     if (entry.entryType === 'classification') return '◇';
-    return vsleepObservationMarker(entry.observation.confidence);
+    return vsleepObservationMarker(entry.observation);
   }
 
   protected vsleepIncidentLabel(incident: VSleepIncidentWindow): string {
