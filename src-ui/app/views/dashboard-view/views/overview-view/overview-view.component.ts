@@ -8,6 +8,10 @@ import { SleepPreparationService } from '../../../../services/sleep-preparation.
 import { isHolidaysEventActive } from 'src-ui/app/utils/event-utils';
 import { VSleepReportService } from '../../../../services/vsleep-report.service';
 import { VSleepReportIntegrityError } from '../../../../services/vsleep-report-schema';
+import {
+  vsleepObservationEvidenceLabel,
+  vsleepObservationMarker,
+} from '../../../../services/vsleep-report-presentation';
 import { toVSleepDisplayDate } from '../../../../services/vsleep-report-timestamp';
 import type {
   VSleepIncidentWindow,
@@ -126,6 +130,16 @@ export class OverviewViewComponent implements OnInit {
     return entry.entryType === 'observation'
       ? entry.observation.kind
       : entry.classification.category;
+  }
+
+  protected vsleepObservationTrustLabel(entry: VSleepTimelineEntry): string {
+    if (entry.entryType !== 'observation') return '';
+    return vsleepObservationEvidenceLabel(entry.observation.confidence);
+  }
+
+  protected vsleepTimelineMarker(entry: VSleepTimelineEntry): string {
+    if (entry.entryType === 'classification') return '◇';
+    return vsleepObservationMarker(entry.observation.confidence);
   }
 
   protected vsleepIncidentLabel(incident: VSleepIncidentWindow): string {
