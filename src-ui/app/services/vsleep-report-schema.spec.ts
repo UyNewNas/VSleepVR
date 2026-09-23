@@ -1,7 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { parseVSleepSessionReport } from './vsleep-report-schema';
 
-function validPayload() {
+interface MutableReportPayload {
+  session_id: string | null;
+  recording: {
+    status: string;
+    start_timestamp_utc: string | null;
+    end_timestamp_utc: string | null;
+  };
+  observations: Array<{
+    schema_version: number;
+    timestamp_utc: string;
+    session_id: string;
+    source: string;
+    kind: string;
+    confidence: string;
+  }>;
+  classifications: unknown[];
+  uptime: Record<string, unknown>;
+}
+
+function validPayload(): MutableReportPayload {
   return {
     session_id: 'session-a',
     recording: {
