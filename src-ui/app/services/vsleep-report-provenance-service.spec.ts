@@ -77,6 +77,42 @@ function payloadWithOutOfBoundsClassification(): Record<string, unknown> {
   };
 }
 
+function payloadWithCompleteWindowMismatch(): Record<string, unknown> {
+  return {
+    session_id: 'session-a',
+    recording: {
+      status: 'complete',
+      start_timestamp_utc: '2026-09-21T02:40:00.000Z',
+      end_timestamp_utc: '2026-09-21T02:42:00.000Z',
+    },
+    observations: [
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:40:00.000Z',
+        session_id: 'session-a',
+        source: 'vsleep',
+        kind: 'session_started',
+        confidence: 'observed',
+      },
+      {
+        schema_version: 1,
+        timestamp_utc: '2026-09-21T02:42:00.000Z',
+        session_id: 'session-a',
+        source: 'vsleep',
+        kind: 'session_ended',
+        confidence: 'observed',
+      },
+    ],
+    classifications: [],
+    uptime: {
+      observed_window_ms: 60_000,
+      hmd: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 60_000, transitions: 0 },
+      steamvr: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 60_000, transitions: 0 },
+      vrchat: { observed_up_ms: 0, observed_down_ms: 0, unknown_ms: 60_000, transitions: 0 },
+    },
+  };
+}
+
 describe('VSleep report provenance at the Tauri boundary', () => {
   it('rejects a structurally valid classification whose raw trigger is not authoritative', async () => {
     mocks.invoke.mockReset();
@@ -100,6 +136,18 @@ describe('VSleep report provenance at the Tauri boundary', () => {
       name: 'VSleepReportIntegrityError',
       path: 'classifications[0].timestamp_utc',
       detail: 'derived classification precedes authoritative recording start',
+    } satisfies Partial<VSleepReportIntegrityError>);
+  });
+
+  it('rejects a complete report whose uptime window disagrees with its authoritative bounds', async () => {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValue(payloadWithCompleteWindowMismatch());
+    const service = new VSleepReportService();
+
+    await expect(service.readSessionReport('session-a.jsonl')).rejects.toMatchObject({
+      name: 'VSleepReportIntegrityError',
+      path: 'uptime.observed_window_ms',
+      detail: 'complete recording requires observed window to equal authoritative bounds (120000)',
     } satisfies Partial<VSleepReportIntegrityError>);
   });
 });
