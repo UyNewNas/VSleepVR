@@ -33,6 +33,8 @@ The real producer functions are covered from the write side by `producer_contrac
 
 `SessionReport.recording` is the backend-owned recording-integrity summary. It exposes `status`, `start_timestamp_utc`, and `end_timestamp_utc` so CLI/UI/export consumers do not have to independently reinterpret raw boundary rows.
 
+Frontend consumers must prefer `SessionReport.recording` whenever it is present. `VSleepReportService` keeps raw-observation boundary derivation only as a compatibility fallback for reports generated before the backend summary existed. An `ambiguous_session` summary is fail-closed for derived frontend classifications and incident windows while raw observations remain visible.
+
 The status is conservative and source-qualified:
 
 - `complete`: one authoritative, parseable start and one authoritative, parseable end in chronological order;
