@@ -36,8 +36,9 @@ Derived reliability obeys all of the following rules:
 - Mixed-session inputs are quarantined from classification and uptime; raw observations are preserved.
 - Malformed or unparseable timestamps remain forensic evidence but cannot mutate classifier state.
 - Valid evidence is analyzed chronologically rather than in JSONL append order.
-- A unique authoritative observed `session_started -> session_ended` pair bounds derived analysis. Partial or ambiguous recordings stay conservative rather than inventing boundaries.
-- Events outside a complete authoritative session window do not affect classification or uptime.
+- Each unique authoritative session boundary is usable independently. A known `session_started` still excludes earlier evidence when `session_ended` is missing or ambiguous, and a known `session_ended` still excludes later evidence when `session_started` is missing or ambiguous.
+- A unique authoritative `session_started -> session_ended` pair bounds both sides. If the two unique edges are reversed, the pair is internally inconsistent and is not converted into a guessed interval.
+- Events outside any trustworthy known session bound do not affect classification or uptime.
 - Same-millisecond events are a simultaneous batch. Their append order is not treated as causal order.
 - Conflicting same-millisecond start/stop evidence collapses the affected runtime state to unknown.
 - Inferred events are never recycled as observed inputs for a later inference.
@@ -46,7 +47,7 @@ Derived reliability obeys all of the following rules:
 
 ## Failure attribution rule
 
-A failure-like observation may be classified only from runtime state established by earlier authoritative observed evidence. If correlated state is absent, ambiguous, malformed, outside the recording window, inferred, or source-mismatched, the result must fall back to `unknown_insufficient_evidence` rather than upgrading confidence.
+A failure-like observation may be classified only from runtime state established by earlier authoritative observed evidence. If correlated state is absent, ambiguous, malformed, outside the trustworthy recording bounds, inferred, or source-mismatched, the result must fall back to `unknown_insufficient_evidence` rather than upgrading confidence.
 
 Examples:
 
@@ -58,6 +59,8 @@ Examples:
 ## Uptime accounting rule
 
 `observed_up_ms` and `observed_down_ms` may use only authoritative observed runtime-state transitions. Time before the first known state, time after an ambiguity collapses state to unknown, and intervals unsupported by authoritative evidence remain `unknown_ms`.
+
+For a partial recording, `observed_window_ms` uses every trustworthy boundary that exists. The missing side falls back only to the first/last authoritative timestamp actually present in the journal; it is therefore an observed evidence span, not a claim that the VSleep session began earlier or continued later.
 
 A report must never turn absence of evidence into downtime.
 
@@ -72,5 +75,5 @@ For any new producer or event kind, reviewers should check:
 - whether the same row is accepted identically by core and persisted report construction;
 - whether wrong-source rows remain present in `observations` but inert for derivation;
 - whether equal-timestamp ordering is append-order independent;
-- whether complete-session windowing is applied consistently to classification and uptime;
+- whether complete and partial session bounds are applied consistently to classification, uptime, and the frontend report view;
 - whether tests cover both an accepted source/kind pair and a rejected near-miss pair.
