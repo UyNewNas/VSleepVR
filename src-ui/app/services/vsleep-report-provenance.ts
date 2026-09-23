@@ -13,6 +13,68 @@ const authoritativeTriggerSources: Partial<Record<VSleepEventKind, VSleepEventSo
   windows_resume: 'windows_power',
 };
 
+function validateBackendOwnedReportConsistency(report: VSleepSessionReport): void {
+  const recording = report.recording;
+  if (!recording) return;
+
+  if (report.session_id === null) {
+    if (report.classifications.length !== 0) {
+      throw new VSleepReportIntegrityError(
+        'classifications',
+        'derived classifications require an unambiguous session_id'
+      );
+    }
+
+    if (report.uptime.observed_window_ms !== null) {
+      throw new VSleepReportIntegrityError(
+        'uptime.observed_window_ms',
+        'sessionless reports require a null observed window'
+      );
+    }
+
+    const expectedStatus = report.observations.length === 0 ? 'missing_both' : 'ambiguous_session';
+    if (recording.status !== expectedStatus) {
+      throw new VSleepReportIntegrityError(
+        'recording.status',
+        `sessionless report with ${report.observations.length === 0 ? 'no' : 'mixed'} observations requires ${expectedStatus}`
+      );
+    }
+    return;
+  }
+
+  if (report.observations.length === 0) {
+    throw new VSleepReportIntegrityError(
+      'session_id',
+      'non-null session_id requires at least one observation'
+    );
+  }
+
+  const mismatchedObservationIndex = report.observations.findIndex(
+    (observation) => observation.session_id !== report.session_id
+  );
+  if (mismatchedObservationIndex !== -1) {
+    throw new VSleepReportIntegrityError(
+      `observations[${mismatchedObservationIndex}].session_id`,
+      'current backend report observations must match session_id'
+    );
+  }
+
+  if (recording.status === 'complete') {
+    const startMs = Date.parse(recording.start_timestamp_utc ?? '');
+    const endMs = Date.parse(recording.end_timestamp_utc ?? '');
+    const expectedWindowMs = endMs - startMs;
+    if (
+      Number.isSafeInteger(expectedWindowMs) &&
+      report.uptime.observed_window_ms !== expectedWindowMs
+    ) {
+      throw new VSleepReportIntegrityError(
+        'uptime.observed_window_ms',
+        `complete recording requires observed window to equal authoritative bounds (${expectedWindowMs})`
+      );
+    }
+  }
+}
+
 /**
  * Cross-check backend-owned classifications against the raw journal evidence
  * carried in the same report. The runtime schema already validates the shape and
@@ -28,6 +90,7 @@ const authoritativeTriggerSources: Partial<Record<VSleepEventKind, VSleepEventSo
 export function validateVSleepClassificationProvenance(
   report: VSleepSessionReport
 ): VSleepSessionReport {
+  validateBackendOwnedReportConsistency(report);
   if (report.classifications.length === 0) return report;
 
   if (report.session_id === null) {
