@@ -208,15 +208,13 @@
               [class.inference]="entry.entryType === 'classification'"
             >
               <span class="vsleep-timeline-time">{{ formatVSleepTime(entry.timestampUtc) }}</span>
-              <span class="vsleep-timeline-marker">
-                {{ entry.entryType === 'observation' ? '●' : '◇' }}
-              </span>
+              <span class="vsleep-timeline-marker">{{ vsleepTimelineMarker(entry) }}</span>
               <div class="vsleep-timeline-detail">
                 <div class="vsleep-timeline-kind">
                   {{ vsleepEntryLabel(entry) }}
                   @if (entry.entryType === 'observation') {
                     <span class="vsleep-timeline-confidence">
-                      · observed · {{ entry.observation.source }}
+                      · {{ vsleepObservationTrustLabel(entry) }} · {{ entry.observation.source }}
                     </span>
                   } @else {
                     <span class="vsleep-timeline-confidence">
