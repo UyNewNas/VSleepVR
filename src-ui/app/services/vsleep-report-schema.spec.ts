@@ -126,4 +126,28 @@ describe('VSleep session report runtime schema', () => {
     (payload.observations as unknown[]) = [null];
     expect(() => parseVSleepSessionReport(payload)).toThrow(/observations\[0\]: expected object/);
   });
+
+  it('rejects uptime durations that do not partition the observed window', () => {
+    const payload = validPayload();
+    (payload.uptime['hmd'] as Record<string, unknown>)['unknown_ms'] = 59_999;
+    expect(() => parseVSleepSessionReport(payload)).toThrow(
+      /uptime\.hmd: runtime durations must sum to observed_window_ms \(60000\)/
+    );
+  });
+
+  it('requires a null observed window to carry only the backend default runtime summaries', () => {
+    const payload = validPayload();
+    payload.uptime['observed_window_ms'] = null;
+    expect(() => parseVSleepSessionReport(payload)).toThrow(
+      /uptime\.hmd: expected zero runtime summary when observed_window_ms is null/
+    );
+  });
+
+  it('rejects fractional runtime transition counts', () => {
+    const payload = validPayload();
+    (payload.uptime['hmd'] as Record<string, unknown>)['transitions'] = 0.5;
+    expect(() => parseVSleepSessionReport(payload)).toThrow(
+      /uptime\.hmd\.transitions: expected non-negative safe integer/
+    );
+  });
 });
