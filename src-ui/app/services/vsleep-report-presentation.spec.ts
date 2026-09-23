@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  vsleepClassificationEvidenceLabel,
+  vsleepClassificationIsInference,
   vsleepObservationEvidenceLabel,
   vsleepObservationMarker,
 } from './vsleep-report-presentation';
@@ -58,5 +60,19 @@ describe('VSleep report presentation trust labels', () => {
       'forensic · producer_specific_future_value'
     );
     expect(vsleepObservationMarker(event)).toBe('○');
+  });
+
+  it('labels backend classifications as inferred causes or observed-evidence derivations', () => {
+    expect(vsleepClassificationEvidenceLabel('inferred_high')).toBe('inferred · high');
+    expect(vsleepClassificationEvidenceLabel('inferred_medium')).toBe('inferred · medium');
+    expect(vsleepClassificationEvidenceLabel('inferred_low')).toBe('inferred · low');
+    expect(vsleepClassificationEvidenceLabel('observed')).toBe('derived · observed evidence');
+  });
+
+  it('reserves inference styling for inferred classifications', () => {
+    expect(vsleepClassificationIsInference('observed')).toBe(false);
+    expect(vsleepClassificationIsInference('inferred_high')).toBe(true);
+    expect(vsleepClassificationIsInference('inferred_medium')).toBe(true);
+    expect(vsleepClassificationIsInference('inferred_low')).toBe(true);
   });
 });
