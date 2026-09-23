@@ -296,7 +296,7 @@ export class VSleepReportService {
             observation.session_id === report.session_id &&
             observation.confidence === 'observed' &&
             this.isTimestampWithinRecording(observation.timestamp_utc, boundary) &&
-            this.incidentCategoryForRecovery(observation.kind) !== null
+            this.incidentCategoryForRecovery(observation) !== null
         )
         .map(
           (observation): IncidentEvent => ({
@@ -336,7 +336,7 @@ export class VSleepReportService {
         continue;
       }
 
-      const category = this.incidentCategoryForRecovery(event.observation.kind);
+      const category = this.incidentCategoryForRecovery(event.observation);
       if (!category) continue;
       const incident = active.get(category);
       if (!incident) continue;
@@ -382,14 +382,16 @@ export class VSleepReportService {
     );
   }
 
-  private incidentCategoryForRecovery(kind: VSleepEventKind): VSleepIncidentCategory | null {
-    switch (kind) {
+  private incidentCategoryForRecovery(
+    observation: Pick<VSleepSessionEvent, 'source' | 'kind'>
+  ): VSleepIncidentCategory | null {
+    switch (observation.kind) {
       case 'hmd_connected':
-        return 'hmd_or_link_failure';
+        return observation.source === 'open_vr' ? 'hmd_or_link_failure' : null;
       case 'steam_vr_started':
-        return 'steam_vr_failure';
+        return observation.source === 'steam_vr' ? 'steam_vr_failure' : null;
       case 'vrchat_started':
-        return 'vrchat_failure';
+        return observation.source === 'vrchat_process' ? 'vrchat_failure' : null;
       default:
         return null;
     }
