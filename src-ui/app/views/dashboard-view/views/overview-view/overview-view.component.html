@@ -107,8 +107,7 @@
         </button>
         @if (vsleepReport) {
           <span class="vsleep-report-window">
-            {{ vsleepBoundary?.status === 'complete' ? 'complete session' : 'observed fragment' }}
-            · {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
+            derived window · {{ formatVSleepDuration(vsleepReport.uptime.observed_window_ms) }}
           </span>
         }
       </div>
@@ -132,7 +131,12 @@
                 [class.open]="vsleepBoundary.status !== 'complete'"
               >
                 <span class="vsleep-runtime-name">Journal</span>
-                <span class="vsleep-incident-range">{{ vsleepBoundaryLabel(vsleepBoundary) }}</span>
+                <span class="vsleep-incident-range">
+                  <span class="vsleep-incident-confidence">
+                    ◇ {{ vsleepBoundaryTrustLabel(vsleepBoundary) }} ·
+                  </span>
+                  {{ vsleepBoundaryLabel(vsleepBoundary) }}
+                </span>
                 <span class="vsleep-incident-duration">
                   @if (vsleepBoundary.startTimestampUtc) {
                     {{ formatVSleepTime(vsleepBoundary.startTimestampUtc) }}
@@ -153,9 +157,9 @@
             <div class="vsleep-section-label">
               Runtime durations ·
               {{
-                vsleepBoundary?.status === 'complete'
-                  ? 'complete session'
-                  : 'observed fragment only'
+                vsleepBoundary
+                  ? vsleepUptimeTrustLabel(vsleepBoundary, vsleepReport.uptime.observed_window_ms)
+                  : 'derived accounting'
               }}
             </div>
             <div class="vsleep-runtime-row">
