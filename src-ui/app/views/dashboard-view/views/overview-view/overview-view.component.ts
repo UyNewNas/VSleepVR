@@ -13,6 +13,8 @@ import {
   vsleepClassificationIsInference,
   vsleepObservationEvidenceLabel,
   vsleepObservationMarker,
+  vsleepRecordingIntegrityEvidenceLabel,
+  vsleepUptimeEvidenceLabel,
 } from '../../../../services/vsleep-report-presentation';
 import { toVSleepDisplayDate } from '../../../../services/vsleep-report-timestamp';
 import type {
@@ -188,6 +190,17 @@ export class OverviewViewComponent implements OnInit {
       case 'ambiguous_session':
         return 'Ambiguous · mixed session evidence';
     }
+  }
+
+  protected vsleepBoundaryTrustLabel(boundary: VSleepSessionBoundarySummary): string {
+    return vsleepRecordingIntegrityEvidenceLabel(boundary.status);
+  }
+
+  protected vsleepUptimeTrustLabel(
+    boundary: VSleepSessionBoundarySummary,
+    observedWindowMs: number | null
+  ): string {
+    return vsleepUptimeEvidenceLabel(boundary.status, observedWindowMs);
   }
 
   protected async refreshVSleepReport(): Promise<void> {
