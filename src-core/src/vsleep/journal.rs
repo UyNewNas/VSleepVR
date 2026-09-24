@@ -151,10 +151,21 @@ impl SessionJournalStore {
         }
 
         let path = self.root.join(requested);
-        if !path.is_file() {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "session journal file does not exist",
+                )
+                .into())
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.file_type().is_file() {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "session journal file does not exist",
+                std::io::ErrorKind::InvalidInput,
+                "session journal file must be a regular file, not a symlink or directory",
             )
             .into());
         }
@@ -454,5 +465,24 @@ mod tests {
             let result = store.read_session_by_file_name(invalid);
             assert!(matches!(result, Err(JournalError::Io(_))));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_session_file_reads() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+        let target = directory.path().join("target.txt");
+        fs::write(&target, b"not a journal").unwrap();
+        symlink(&target, directory.path().join("linked.jsonl")).unwrap();
+
+        assert!(store.session_files().unwrap().is_empty());
+        let result = store.read_session_by_file_name("linked.jsonl");
+        assert!(matches!(
+            result,
+            Err(JournalError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput
+        ));
     }
 }
