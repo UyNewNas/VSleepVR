@@ -183,7 +183,8 @@ async fn observe_hmd_connected_for_session(
     } else {
         EventKind::HmdDisconnected
     };
-    let event = runtime.record_if_active(
+    let event = runtime.record_if_active_session(
+        expected_session_id,
         EventSource::OpenVr,
         kind,
         EventConfidence::Observed,
@@ -242,7 +243,8 @@ async fn observe_steamvr_process_for_session(
         "process_count".to_string(),
         serde_json::Value::from(process_count as u64),
     );
-    let event = runtime.record_if_active(
+    let event = runtime.record_if_active_session(
+        expected_session_id,
         EventSource::SteamVr,
         kind,
         EventConfidence::Observed,
@@ -302,7 +304,8 @@ async fn observe_vrchat_process_for_session(
         "process_count".to_string(),
         serde_json::Value::from(process_count as u64),
     );
-    let event = runtime.record_if_active(
+    let event = runtime.record_if_active_session(
+        expected_session_id,
         EventSource::VrchatProcess,
         kind,
         EventConfidence::Observed,
