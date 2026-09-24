@@ -87,6 +87,27 @@ impl SessionJournalRuntime {
             .map_err(RuntimeError::from)
     }
 
+    /// Records an observation only when the active session is still the session that produced it.
+    ///
+    /// Async observers sample outside the runtime lock. By carrying the source session ID to this
+    /// final write boundary, a late sample from session A is dropped instead of being appended to
+    /// a newly-started session B. The guard is intentionally non-mutating and returns `Ok(None)`
+    /// for stale samples.
+    pub fn record_if_active_session(
+        &self,
+        expected_session_id: &str,
+        source: EventSource,
+        kind: EventKind,
+        confidence: EventConfidence,
+        metadata: BTreeMap<String, Value>,
+    ) -> Result<Option<SessionEvent>, RuntimeError> {
+        if self.active_session_id() != Some(expected_session_id) {
+            return Ok(None);
+        }
+
+        self.record_if_active(source, kind, confidence, metadata)
+    }
+
     pub fn finish_session(&mut self) -> Result<Option<SessionEvent>, RuntimeError> {
         let Some(journal) = self.active_session.as_ref() else {
             return Ok(None);
@@ -155,5 +176,51 @@ mod tests {
         assert_eq!(events[0].kind, EventKind::SessionStarted);
         assert_eq!(events[1].kind, EventKind::HmdDisconnected);
         assert_eq!(events[2].kind, EventKind::SessionEnded);
+    }
+
+    #[test]
+    fn stale_observer_sample_cannot_cross_session_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
+
+        let first_session_id = runtime.start_session().unwrap();
+        runtime.finish_session().unwrap();
+        let second_session_id = runtime.start_session().unwrap();
+
+        assert!(runtime
+            .record_if_active_session(
+                &first_session_id,
+                EventSource::OpenVr,
+                EventKind::HmdDisconnected,
+                EventConfidence::Observed,
+                BTreeMap::new(),
+            )
+            .unwrap()
+            .is_none());
+
+        let current_event = runtime
+            .record_if_active_session(
+                &second_session_id,
+                EventSource::OpenVr,
+                EventKind::HmdConnected,
+                EventConfidence::Observed,
+                BTreeMap::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(current_event.session_id, second_session_id);
+
+        runtime.finish_session().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
+        let second_events = sessions
+            .iter()
+            .map(|session| runtime.read_session(&session.file_name).unwrap())
+            .find(|events| events.first().is_some_and(|event| event.session_id == second_session_id))
+            .unwrap();
+
+        assert_eq!(second_events.len(), 3);
+        assert_eq!(second_events[0].kind, EventKind::SessionStarted);
+        assert_eq!(second_events[1].kind, EventKind::HmdConnected);
+        assert_eq!(second_events[2].kind, EventKind::SessionEnded);
     }
 }
