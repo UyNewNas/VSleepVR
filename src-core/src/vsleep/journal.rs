@@ -121,10 +121,15 @@ impl SessionJournalStore {
             let newline_terminated = record.ends_with(b"\n");
             match serde_json::from_slice::<SessionEvent>(&record) {
                 Ok(event) => events.push(event),
-                Err(_) if !newline_terminated && !events.is_empty() => {
+                Err(error)
+                    if !newline_terminated
+                        && !events.is_empty()
+                        && error.classify() == serde_json::error::Category::Eof =>
+                {
                     // A process or machine can stop after only part of the next JSONL
-                    // record reaches disk. Keep every prior flushed observation readable,
-                    // but never rewrite or try to repair the forensic tail automatically.
+                    // record reaches disk. Only an EOF-classified parse failure qualifies
+                    // as a torn tail: complete-but-schema-invalid JSON remains a hard error.
+                    // Never rewrite or try to repair the forensic tail automatically.
                     break;
                 }
                 Err(error) => return Err(error.into()),
@@ -379,6 +384,25 @@ mod tests {
         let events = store.read_session(&path).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].kind, EventKind::HmdDisconnected);
+    }
+
+    #[test]
+    fn rejects_complete_schema_invalid_final_record_without_newline() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionJournalStore::new(directory.path().to_path_buf()).unwrap();
+        let journal = store.start_session().unwrap();
+        let path = journal.path().to_path_buf();
+        drop(journal);
+
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(br#"{"schema_version":1}"#)
+            .unwrap();
+
+        let result = store.read_session(&path);
+        assert!(matches!(result, Err(JournalError::Json(_))));
     }
 
     #[test]
