@@ -26,6 +26,7 @@ mod telemetry;
 mod utils;
 mod vrc_log_parser;
 mod vrcx;
+mod vsleep;
 
 use std::mem;
 
@@ -407,6 +408,16 @@ async fn app_setup(app_handle: tauri::AppHandle) {
         .unwrap();
     // Get dependencies
     let cache_dir = app_handle.path().app_cache_dir().unwrap();
+    // Initialize VSleep journal storage. Failure is non-fatal so the upstream runtime can still start.
+    match app_handle.path().app_data_dir() {
+        Ok(app_data_dir) => {
+            let journal_root = app_data_dir.join("vsleep").join("sessions");
+            if let Err(error) = vsleep::init(journal_root).await {
+                error!("[VSleep] Failed to initialize session journal: {error}");
+            }
+        }
+        Err(error) => error!("[VSleep] Failed to resolve app data directory: {error}"),
+    }
     // Register deep link schemas if needed
     {
         use tauri_plugin_deep_link::DeepLinkExt;
@@ -573,6 +584,11 @@ fn configure_command_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool {
         telemetry::commands::set_telemetry_enabled,
         error_reporting::set_error_reporting_enabled,
         error_reporting::allow_ui_event,
+        vsleep::commands::vsleep_active_session_id,
+        vsleep::commands::vsleep_start_session,
+        vsleep::commands::vsleep_finish_session,
+        vsleep::commands::vsleep_list_sessions,
+        vsleep::commands::vsleep_read_session,
         vrcx::commands::vrcx_log,
     ]
 }
