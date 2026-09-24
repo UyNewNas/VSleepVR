@@ -18,6 +18,215 @@ app-event-log {
   flex: 1;
 }
 
+.vsleep-report {
+  flex-shrink: 0;
+  margin-bottom: 1em;
+  padding: 1em 1.25em;
+  overflow: hidden;
+  border-radius: var(--surface-border-radius);
+  background: var(--color-surface-1);
+  border: 1px solid color-mix(in srgb, var(--color-text-1) 10%, transparent);
+
+  .vsleep-report-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75em;
+    margin-bottom: 0.75em;
+  }
+
+  .vsleep-report-title {
+    flex-shrink: 0;
+    font-size: 1.1em;
+    font-weight: 600;
+  }
+
+  .vsleep-report-controls {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35em;
+  }
+
+  .vsleep-report-session,
+  .vsleep-report-window {
+    font-size: 0.78em;
+    opacity: 0.62;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-report-session {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vsleep-report-window {
+    margin-left: 0.2em;
+  }
+
+  .vsleep-report-nav,
+  .vsleep-report-refresh {
+    flex-shrink: 0;
+    width: 1.8em;
+    height: 1.8em;
+    padding: 0;
+    border: 0;
+    border-radius: calc(var(--surface-border-radius) / 2);
+    background: var(--color-surface-0);
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    &:not(:disabled):hover {
+      background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-0));
+    }
+  }
+
+  .vsleep-report-state {
+    min-height: 3em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.55;
+  }
+
+  .vsleep-report-body {
+    display: grid;
+    grid-template-columns: minmax(14em, 0.9fr) minmax(0, 1.4fr);
+    gap: 1em;
+    min-height: 0;
+  }
+
+  .vsleep-summary-column,
+  .vsleep-uptime,
+  .vsleep-incidents {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .vsleep-summary-column {
+    gap: 0.65em;
+    min-width: 0;
+  }
+
+  .vsleep-uptime,
+  .vsleep-incidents {
+    gap: 0.35em;
+  }
+
+  .vsleep-runtime-row {
+    display: grid;
+    grid-template-columns: 4.75em repeat(3, minmax(0, 1fr));
+    gap: 0.5em;
+    align-items: center;
+    padding: 0.45em 0.55em;
+    border-radius: calc(var(--surface-border-radius) / 2);
+    background: var(--color-surface-0);
+    font-size: 0.8em;
+    white-space: nowrap;
+  }
+
+  .vsleep-runtime-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vsleep-section-label {
+    font-size: 0.72em;
+    font-weight: 600;
+    opacity: 0.55;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .vsleep-incident-row {
+    display: grid;
+    grid-template-columns: 4.75em minmax(0, 1fr) auto;
+    gap: 0.5em;
+    align-items: center;
+    padding: 0.4em 0.55em;
+    border-radius: calc(var(--surface-border-radius) / 2);
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface-0));
+    border-left: 2px dashed var(--color-primary);
+    font-size: 0.76em;
+    white-space: nowrap;
+
+    &.open {
+      border-left-style: solid;
+    }
+  }
+
+  .vsleep-incident-range {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-incident-duration {
+    opacity: 0.62;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-timeline {
+    max-height: 8.5em;
+    overflow-y: auto;
+    padding-right: 0.25em;
+  }
+
+  .vsleep-timeline-entry {
+    display: grid;
+    grid-template-columns: 3.25em 1em minmax(0, 1fr);
+    gap: 0.4em;
+    align-items: start;
+    padding: 0.3em 0.45em;
+    border-left: 2px solid color-mix(in srgb, var(--color-text-1) 25%, transparent);
+    font-size: 0.8em;
+
+    &.inference {
+      border-left-style: dashed;
+      border-left-color: var(--color-primary);
+      background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    }
+  }
+
+  .vsleep-timeline-time {
+    opacity: 0.55;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vsleep-timeline-marker {
+    text-align: center;
+  }
+
+  .vsleep-timeline-detail {
+    min-width: 0;
+  }
+
+  .vsleep-timeline-kind {
+    overflow-wrap: anywhere;
+  }
+
+  .vsleep-timeline-confidence,
+  .vsleep-timeline-rationale {
+    opacity: 0.62;
+  }
+
+  .vsleep-timeline-rationale {
+    margin-top: 0.1em;
+    font-size: 0.9em;
+    line-height: 1.25;
+  }
+}
+
 .sleep-mode {
   flex-shrink: 0;
   display: flex;

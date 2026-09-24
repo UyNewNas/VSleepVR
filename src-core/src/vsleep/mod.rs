@@ -4,6 +4,12 @@ mod health;
 mod journal;
 mod observer;
 mod runtime;
+mod timeline;
+
+#[cfg(test)]
+mod producer_contract_tests;
+#[cfg(test)]
+mod reliability_contract_tests;
 
 use std::{path::PathBuf, sync::LazyLock};
 use tokio::sync::Mutex;
@@ -15,6 +21,10 @@ pub use journal::{
 };
 pub use observer::{observe_hmd_connected, observe_steamvr_process, observe_vrchat_process};
 pub use runtime::{RuntimeError, SessionJournalRuntime};
+pub use timeline::{
+    build_session_report, FailureClass, FailureClassification, RuntimeUptimeSummary, SessionRecordingStatus,
+    SessionRecordingSummary, SessionReport, SessionUptimeSummary,
+};
 
 pub static INSTANCE: LazyLock<Mutex<Option<SessionJournalRuntime>>> = LazyLock::new(Default::default);
 
