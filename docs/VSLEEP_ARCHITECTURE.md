@@ -97,8 +97,8 @@ The journal reader should preserve evidence without silently repairing it:
 - UI-facing reads accept only a basename for a `.jsonl` file under the journal root, not an arbitrary filesystem path;
 - the selected entry must be a regular file; symlinks, directories, and other non-regular file objects are rejected;
 - a complete final JSON record is valid even when it has no trailing newline;
-- an unterminated malformed final record may be treated as a torn crash/power-loss tail only when at least one earlier record was parsed successfully;
-- malformed newline-terminated records, or a malformed only/first record, remain hard read errors;
+- an unterminated final record may be treated as a torn crash/power-loss tail only when at least one earlier record parsed successfully **and** `serde_json` classifies the parse failure as unexpected EOF;
+- complete-but-schema-invalid JSON, other non-EOF parse failures, malformed newline-terminated records, and malformed only/first records remain hard read errors;
 - tolerant reads never truncate, rewrite, or synthesize journal content.
 
 Writers flush each JSONL record before returning it to callers. This improves crash readability but is not a storage-device durability guarantee: without an explicit `fsync`/equivalent policy, sudden power loss can still leave the final record absent or torn. The reader contract therefore favors preserving already-flushed evidence while failing closed on durable corruption.
