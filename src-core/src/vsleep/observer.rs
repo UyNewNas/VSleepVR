@@ -60,10 +60,10 @@ fn start_openvr_hmd_observer() {
         loop {
             tokio::time::sleep(HMD_OBSERVER_INTERVAL).await;
 
-            if !has_active_session().await {
+            let Some(session_id) = active_session_id().await else {
                 clear_hmd_connection_cache().await;
                 continue;
-            }
+            };
 
             let connected = {
                 let context = crate::openvr::OVR_CONTEXT.lock().await;
@@ -83,7 +83,7 @@ fn start_openvr_hmd_observer() {
             let Some(connected) = connected else {
                 continue;
             };
-            if let Err(error) = observe_hmd_connected(connected).await {
+            if let Err(error) = observe_hmd_connected_for_session(&session_id, connected).await {
                 log::error!("[VSleep] Failed to record HMD connectivity observation: {error}");
             }
         }
@@ -104,14 +104,14 @@ fn start_steamvr_process_observer() {
         loop {
             tokio::time::sleep(STEAMVR_PROCESS_OBSERVER_INTERVAL).await;
 
-            if !has_active_session().await {
+            let Some(session_id) = active_session_id().await else {
                 clear_steamvr_process_cache().await;
                 continue;
-            }
+            };
 
             let process_ids = crate::utils::process_ids("vrmonitor.exe").await;
             let process_count = process_ids.len();
-            if let Err(error) = observe_steamvr_process(process_count).await {
+            if let Err(error) = observe_steamvr_process_for_session(&session_id, process_count).await {
                 log::error!("[VSleep] Failed to record SteamVR process observation: {error}");
             }
         }
@@ -132,14 +132,14 @@ fn start_vrchat_process_observer() {
         loop {
             tokio::time::sleep(VRCHAT_PROCESS_OBSERVER_INTERVAL).await;
 
-            if !has_active_session().await {
+            let Some(session_id) = active_session_id().await else {
                 clear_vrchat_process_cache().await;
                 continue;
-            }
+            };
 
             let process_ids = crate::utils::process_ids("VRChat.exe").await;
             let process_count = process_ids.len();
-            if let Err(error) = observe_vrchat_process(process_count).await {
+            if let Err(error) = observe_vrchat_process_for_session(&session_id, process_count).await {
                 log::error!("[VSleep] Failed to record VRChat process observation: {error}");
             }
         }
@@ -153,18 +153,28 @@ fn start_vrchat_process_observer() {
 /// newly started session receives a baseline HMD connectivity event even if the physical state
 /// has not changed since the previous session.
 pub async fn observe_hmd_connected(connected: bool) -> Result<Option<SessionEvent>, RuntimeError> {
+    let Some(session_id) = active_session_id().await else {
+        clear_hmd_connection_cache().await;
+        return Ok(None);
+    };
+    observe_hmd_connected_for_session(&session_id, connected).await
+}
+
+async fn observe_hmd_connected_for_session(
+    expected_session_id: &str,
+    connected: bool,
+) -> Result<Option<SessionEvent>, RuntimeError> {
     let instance = INSTANCE.lock().await;
     let Some(runtime) = instance.as_ref() else {
         clear_hmd_connection_cache().await;
         return Ok(None);
     };
-    let Some(session_id) = runtime.active_session_id().map(str::to_string) else {
-        clear_hmd_connection_cache().await;
+    if !matches_expected_session(expected_session_id, runtime.active_session_id()) {
         return Ok(None);
-    };
+    }
 
     let mut previous = LAST_HMD_CONNECTION.lock().await;
-    if same_hmd_observation(previous.as_ref(), &session_id, connected) {
+    if same_hmd_observation(previous.as_ref(), expected_session_id, connected) {
         return Ok(None);
     }
 
@@ -182,7 +192,7 @@ pub async fn observe_hmd_connected(connected: bool) -> Result<Option<SessionEven
 
     if event.is_some() {
         *previous = Some(HmdConnectionObservation {
-            session_id,
+            session_id: expected_session_id.to_string(),
             connected,
         });
     }
@@ -196,19 +206,29 @@ pub async fn observe_hmd_connected(connected: bool) -> Result<Option<SessionEven
 pub async fn observe_steamvr_process(
     process_count: usize,
 ) -> Result<Option<SessionEvent>, RuntimeError> {
+    let Some(session_id) = active_session_id().await else {
+        clear_steamvr_process_cache().await;
+        return Ok(None);
+    };
+    observe_steamvr_process_for_session(&session_id, process_count).await
+}
+
+async fn observe_steamvr_process_for_session(
+    expected_session_id: &str,
+    process_count: usize,
+) -> Result<Option<SessionEvent>, RuntimeError> {
     let instance = INSTANCE.lock().await;
     let Some(runtime) = instance.as_ref() else {
         clear_steamvr_process_cache().await;
         return Ok(None);
     };
-    let Some(session_id) = runtime.active_session_id().map(str::to_string) else {
-        clear_steamvr_process_cache().await;
+    if !matches_expected_session(expected_session_id, runtime.active_session_id()) {
         return Ok(None);
-    };
+    }
 
     let running = process_count > 0;
     let mut previous = LAST_STEAMVR_PROCESS.lock().await;
-    if same_process_observation(previous.as_ref(), &session_id, running) {
+    if same_process_observation(previous.as_ref(), expected_session_id, running) {
         return Ok(None);
     }
 
@@ -231,7 +251,7 @@ pub async fn observe_steamvr_process(
 
     if event.is_some() {
         *previous = Some(ProcessObservation {
-            session_id,
+            session_id: expected_session_id.to_string(),
             running,
         });
     }
@@ -246,19 +266,29 @@ pub async fn observe_steamvr_process(
 pub async fn observe_vrchat_process(
     process_count: usize,
 ) -> Result<Option<SessionEvent>, RuntimeError> {
+    let Some(session_id) = active_session_id().await else {
+        clear_vrchat_process_cache().await;
+        return Ok(None);
+    };
+    observe_vrchat_process_for_session(&session_id, process_count).await
+}
+
+async fn observe_vrchat_process_for_session(
+    expected_session_id: &str,
+    process_count: usize,
+) -> Result<Option<SessionEvent>, RuntimeError> {
     let instance = INSTANCE.lock().await;
     let Some(runtime) = instance.as_ref() else {
         clear_vrchat_process_cache().await;
         return Ok(None);
     };
-    let Some(session_id) = runtime.active_session_id().map(str::to_string) else {
-        clear_vrchat_process_cache().await;
+    if !matches_expected_session(expected_session_id, runtime.active_session_id()) {
         return Ok(None);
-    };
+    }
 
     let running = process_count > 0;
     let mut previous = LAST_VRCHAT_PROCESS.lock().await;
-    if same_process_observation(previous.as_ref(), &session_id, running) {
+    if same_process_observation(previous.as_ref(), expected_session_id, running) {
         return Ok(None);
     }
 
@@ -281,20 +311,23 @@ pub async fn observe_vrchat_process(
 
     if event.is_some() {
         *previous = Some(ProcessObservation {
-            session_id,
+            session_id: expected_session_id.to_string(),
             running,
         });
     }
     Ok(event)
 }
 
-async fn has_active_session() -> bool {
+async fn active_session_id() -> Option<String> {
     INSTANCE
         .lock()
         .await
         .as_ref()
-        .and_then(|runtime| runtime.active_session_id())
-        .is_some()
+        .and_then(|runtime| runtime.active_session_id().map(str::to_string))
+}
+
+fn matches_expected_session(expected_session_id: &str, active_session_id: Option<&str>) -> bool {
+    active_session_id == Some(expected_session_id)
 }
 
 fn same_hmd_observation(
@@ -353,5 +386,12 @@ mod tests {
         assert!(!same_process_observation(Some(&previous), "session-a", false));
         assert!(!same_process_observation(Some(&previous), "session-b", true));
         assert!(!same_process_observation(None, "session-a", true));
+    }
+
+    #[test]
+    fn samples_are_attributed_only_to_the_session_that_started_sampling() {
+        assert!(matches_expected_session("session-a", Some("session-a")));
+        assert!(!matches_expected_session("session-a", Some("session-b")));
+        assert!(!matches_expected_session("session-a", None));
     }
 }
