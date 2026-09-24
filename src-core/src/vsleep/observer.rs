@@ -12,6 +12,9 @@ use tokio::sync::Mutex;
 const HMD_OBSERVER_INTERVAL: Duration = Duration::from_millis(250);
 const STEAMVR_PROCESS_OBSERVER_INTERVAL: Duration = Duration::from_secs(1);
 const VRCHAT_PROCESS_OBSERVER_INTERVAL: Duration = Duration::from_secs(1);
+const OBSERVATION_ROLE_METADATA_KEY: &str = "observation_role";
+const OBSERVATION_ROLE_BASELINE: &str = "baseline";
+const OBSERVATION_ROLE_TRANSITION: &str = "transition";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HmdConnectionObservation {
@@ -49,8 +52,9 @@ pub fn start_observers() {
 ///
 /// The task only samples while a VSleep session is active. An unavailable OpenVR context is
 /// treated as "no observation" rather than "disconnected", because runtime unavailability does
-/// not prove that the physical/link layer disconnected. This keeps the journal observation-first
-/// and avoids manufacturing HMD failures from ambiguous evidence.
+/// not prove that the physical/link layer disconnected. The HMD deduplication cache is cleared
+/// whenever OpenVR cannot provide a sample, so the first observation after the gap is emitted as
+/// a fresh baseline instead of being compared with stale pre-gap state.
 fn start_openvr_hmd_observer() {
     if HMD_OBSERVER_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -68,6 +72,7 @@ fn start_openvr_hmd_observer() {
             let connected = {
                 let context = crate::openvr::OVR_CONTEXT.lock().await;
                 let Some(context) = context.as_ref() else {
+                    clear_hmd_connection_cache().await;
                     continue;
                 };
                 context
@@ -81,6 +86,7 @@ fn start_openvr_hmd_observer() {
             };
 
             let Some(connected) = connected else {
+                clear_hmd_connection_cache().await;
                 continue;
             };
             if let Err(error) = observe_hmd_connected_for_session(&session_id, connected).await {
@@ -151,7 +157,8 @@ fn start_vrchat_process_observer() {
 ///
 /// When no VSleep session is active, the cached observation is cleared. This guarantees that a
 /// newly started session receives a baseline HMD connectivity event even if the physical state
-/// has not changed since the previous session.
+/// has not changed since the previous session. The same re-baselining happens after an OpenVR
+/// observation gap, avoiding an inferred transition across time that was not observable.
 pub async fn observe_hmd_connected(connected: bool) -> Result<Option<SessionEvent>, RuntimeError> {
     let Some(session_id) = active_session_id().await else {
         clear_hmd_connection_cache().await;
@@ -183,12 +190,20 @@ async fn observe_hmd_connected_for_session(
     } else {
         EventKind::HmdDisconnected
     };
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        OBSERVATION_ROLE_METADATA_KEY.to_string(),
+        serde_json::Value::from(observation_role_for_hmd(
+            previous.as_ref(),
+            expected_session_id,
+        )),
+    );
     let event = runtime.record_if_active_session(
         expected_session_id,
         EventSource::OpenVr,
         kind,
         EventConfidence::Observed,
-        BTreeMap::new(),
+        metadata,
     )?;
 
     if event.is_some() {
@@ -242,6 +257,13 @@ async fn observe_steamvr_process_for_session(
     metadata.insert(
         "process_count".to_string(),
         serde_json::Value::from(process_count as u64),
+    );
+    metadata.insert(
+        OBSERVATION_ROLE_METADATA_KEY.to_string(),
+        serde_json::Value::from(observation_role_for_process(
+            previous.as_ref(),
+            expected_session_id,
+        )),
     );
     let event = runtime.record_if_active_session(
         expected_session_id,
@@ -304,6 +326,13 @@ async fn observe_vrchat_process_for_session(
         "process_count".to_string(),
         serde_json::Value::from(process_count as u64),
     );
+    metadata.insert(
+        OBSERVATION_ROLE_METADATA_KEY.to_string(),
+        serde_json::Value::from(observation_role_for_process(
+            previous.as_ref(),
+            expected_session_id,
+        )),
+    );
     let event = runtime.record_if_active_session(
         expected_session_id,
         EventSource::VrchatProcess,
@@ -331,6 +360,28 @@ async fn active_session_id() -> Option<String> {
 
 fn matches_expected_session(expected_session_id: &str, active_session_id: Option<&str>) -> bool {
     active_session_id == Some(expected_session_id)
+}
+
+fn observation_role_for_hmd(
+    previous: Option<&HmdConnectionObservation>,
+    session_id: &str,
+) -> &'static str {
+    if previous.is_some_and(|value| value.session_id == session_id) {
+        OBSERVATION_ROLE_TRANSITION
+    } else {
+        OBSERVATION_ROLE_BASELINE
+    }
+}
+
+fn observation_role_for_process(
+    previous: Option<&ProcessObservation>,
+    session_id: &str,
+) -> &'static str {
+    if previous.is_some_and(|value| value.session_id == session_id) {
+        OBSERVATION_ROLE_TRANSITION
+    } else {
+        OBSERVATION_ROLE_BASELINE
+    }
 }
 
 fn same_hmd_observation(
@@ -396,5 +447,40 @@ mod tests {
         assert!(matches_expected_session("session-a", Some("session-a")));
         assert!(!matches_expected_session("session-a", Some("session-b")));
         assert!(!matches_expected_session("session-a", None));
+    }
+
+    #[test]
+    fn observation_roles_distinguish_baselines_from_same_session_transitions() {
+        let hmd = HmdConnectionObservation {
+            session_id: "session-a".to_string(),
+            connected: true,
+        };
+        let process = ProcessObservation {
+            session_id: "session-a".to_string(),
+            running: true,
+        };
+
+        assert_eq!(observation_role_for_hmd(None, "session-a"), OBSERVATION_ROLE_BASELINE);
+        assert_eq!(
+            observation_role_for_hmd(Some(&hmd), "session-b"),
+            OBSERVATION_ROLE_BASELINE
+        );
+        assert_eq!(
+            observation_role_for_hmd(Some(&hmd), "session-a"),
+            OBSERVATION_ROLE_TRANSITION
+        );
+
+        assert_eq!(
+            observation_role_for_process(None, "session-a"),
+            OBSERVATION_ROLE_BASELINE
+        );
+        assert_eq!(
+            observation_role_for_process(Some(&process), "session-b"),
+            OBSERVATION_ROLE_BASELINE
+        );
+        assert_eq!(
+            observation_role_for_process(Some(&process), "session-a"),
+            OBSERVATION_ROLE_TRANSITION
+        );
     }
 }
