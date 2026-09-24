@@ -10,6 +10,7 @@ import { getVersion } from '../../utils/app-utils';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { BUILD_ID, FLAVOUR } from '../../../build';
 import { MessageCenterService } from 'src-ui/app/services/message-center/message-center.service';
+import { VSleepSleepInhibitionService } from 'src-ui/app/services/vsleep-sleep-inhibition.service';
 import { fade } from 'src-ui/app/utils/animations';
 
 const appWindow = getCurrentWebviewWindow();
@@ -31,10 +32,12 @@ export class WindowTitlebarComponent implements OnInit {
 
   constructor(
     protected messageCenter: MessageCenterService,
+    protected vsleepSleepInhibition: VSleepSleepInhibitionService,
     private cdr: ChangeDetectorRef
   ) {}
 
   async ngOnInit() {
+    this.vsleepSleepInhibition.init();
     this.version = await getVersion();
     this.versionReady = true;
     this.cdr.markForCheck();
@@ -50,6 +53,10 @@ export class WindowTitlebarComponent implements OnInit {
 
   async close() {
     await appWindow.close();
+  }
+
+  protected toggleVSleepSleepInhibition() {
+    void this.vsleepSleepInhibition.toggle().catch(() => undefined);
   }
 
   protected async copyVersion() {

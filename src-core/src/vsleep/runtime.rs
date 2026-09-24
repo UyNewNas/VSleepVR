@@ -1,5 +1,6 @@
 use super::event::{EventConfidence, EventKind, EventSource, SessionEvent};
 use super::journal::{JournalError, SessionFileInfo, SessionJournal, SessionJournalStore};
+use super::sleep_inhibition::{SleepInhibitionController, SleepInhibitionError};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -11,15 +12,21 @@ use std::{
 #[derive(Debug)]
 pub enum RuntimeError {
     Journal(JournalError),
+    SleepInhibition(SleepInhibitionError),
     SessionAlreadyActive(String),
+    NoActiveSessionForSleepInhibition,
 }
 
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Journal(error) => Display::fmt(error, f),
+            Self::SleepInhibition(error) => Display::fmt(error, f),
             Self::SessionAlreadyActive(session_id) => {
                 write!(f, "VSleep session is already active: {session_id}")
+            }
+            Self::NoActiveSessionForSleepInhibition => {
+                write!(f, "Windows sleep inhibition requires an active VSleep session")
             }
         }
     }
@@ -29,7 +36,8 @@ impl Error for RuntimeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Journal(error) => Some(error),
-            Self::SessionAlreadyActive(_) => None,
+            Self::SleepInhibition(error) => Some(error),
+            Self::SessionAlreadyActive(_) | Self::NoActiveSessionForSleepInhibition => None,
         }
     }
 }
@@ -40,10 +48,17 @@ impl From<JournalError> for RuntimeError {
     }
 }
 
+impl From<SleepInhibitionError> for RuntimeError {
+    fn from(value: SleepInhibitionError) -> Self {
+        Self::SleepInhibition(value)
+    }
+}
+
 #[derive(Debug)]
 pub struct SessionJournalRuntime {
     store: SessionJournalStore,
     active_session: Option<SessionJournal>,
+    sleep_inhibition: SleepInhibitionController,
 }
 
 impl SessionJournalRuntime {
@@ -51,6 +66,7 @@ impl SessionJournalRuntime {
         Ok(Self {
             store: SessionJournalStore::new(root)?,
             active_session: None,
+            sleep_inhibition: SleepInhibitionController::new()?,
         })
     }
 
@@ -58,6 +74,10 @@ impl SessionJournalRuntime {
         self.active_session
             .as_ref()
             .map(SessionJournal::session_id)
+    }
+
+    pub fn sleep_inhibition_active(&self) -> bool {
+        self.sleep_inhibition.is_active()
     }
 
     pub fn start_session(&mut self) -> Result<String, RuntimeError> {
@@ -71,6 +91,37 @@ impl SessionJournalRuntime {
         let session_id = journal.session_id().to_string();
         self.active_session = Some(journal);
         Ok(session_id)
+    }
+
+    pub fn set_sleep_inhibition(&mut self, enabled: bool) -> Result<bool, RuntimeError> {
+        if enabled && self.active_session.is_none() {
+            return Err(RuntimeError::NoActiveSessionForSleepInhibition);
+        }
+
+        let changed = self.sleep_inhibition.set_enabled(enabled)?;
+        if !changed {
+            return Ok(self.sleep_inhibition.is_active());
+        }
+
+        let kind = if enabled {
+            EventKind::SystemSleepInhibitionEnabled
+        } else {
+            EventKind::SystemSleepInhibitionDisabled
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "api".to_string(),
+            Value::String("SetThreadExecutionState".to_string()),
+        );
+        metadata.insert("display_required".to_string(), Value::Bool(false));
+        self.record_if_active(
+            EventSource::WindowsPower,
+            kind,
+            EventConfidence::Observed,
+            metadata,
+        )?;
+
+        Ok(self.sleep_inhibition.is_active())
     }
 
     pub fn record_if_active(
@@ -89,8 +140,15 @@ impl SessionJournalRuntime {
 
     pub fn finish_session(&mut self) -> Result<Option<SessionEvent>, RuntimeError> {
         let Some(journal) = self.active_session.as_ref() else {
+            if self.sleep_inhibition.is_active() {
+                self.sleep_inhibition.set_enabled(false)?;
+            }
             return Ok(None);
         };
+
+        if self.sleep_inhibition.is_active() {
+            self.set_sleep_inhibition(false)?;
+        }
 
         let event = journal.finish()?;
         self.active_session = None;
@@ -116,6 +174,11 @@ mod tests {
         let mut runtime = SessionJournalRuntime::new(directory.path().to_path_buf()).unwrap();
 
         assert!(runtime.active_session_id().is_none());
+        assert!(!runtime.sleep_inhibition_active());
+        assert!(matches!(
+            runtime.set_sleep_inhibition(true),
+            Err(RuntimeError::NoActiveSessionForSleepInhibition)
+        ));
         assert!(runtime
             .record_if_active(
                 EventSource::OpenVr,
@@ -146,6 +209,7 @@ mod tests {
 
         assert!(runtime.finish_session().unwrap().is_some());
         assert!(runtime.active_session_id().is_none());
+        assert!(!runtime.sleep_inhibition_active());
         assert!(runtime.finish_session().unwrap().is_none());
 
         let sessions = runtime.list_sessions().unwrap();
